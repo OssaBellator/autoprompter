@@ -1,0 +1,42 @@
+name: Finalize AutoPrompter 2.2
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .release-parts/READY
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.head_ref == 'agent/per-chat-continuity-init'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/per-chat-continuity-init
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Reconstruct runtime files
+        shell: bash
+        run: |
+          cat .release-parts/background.js.part* > background.js
+          cat .release-parts/content.js.part* > content.js
+          cat .release-parts/popup.js.part* > popup.js
+      - name: Validate release
+        run: |
+          npm test
+          npm run check
+      - name: Commit validated release
+        shell: bash
+        run: |
+          rm -rf .release-parts .github/workflows/finalize-v22.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Release AutoPrompter 2.2 with per-chat continuity"
+          git push origin HEAD:agent/per-chat-continuity-init
