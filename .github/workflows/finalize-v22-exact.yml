@@ -1,0 +1,51 @@
+name: Finalize exact AutoPrompter 2.2 runtime
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .release-exact/READY
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.head_ref == 'agent/per-chat-continuity-init'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/per-chat-continuity-init
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Decode exact runtime files
+        shell: bash
+        run: |
+          : > /tmp/background.js
+          for part in .release-exact/background.js.part*.b64; do base64 -d "$part" >> /tmp/background.js; done
+          : > /tmp/content.js
+          for part in .release-exact/content.js.part*.b64; do base64 -d "$part" >> /tmp/content.js; done
+          : > /tmp/popup.js
+          for part in .release-exact/popup.js.part*.b64; do base64 -d "$part" >> /tmp/popup.js; done
+          test "$(git hash-object /tmp/background.js)" = "866449d7f4d8163ffa297461ddaa77b5d7405744"
+          test "$(git hash-object /tmp/content.js)" = "048101059d37efabfab9aa2b1457d4908c02d165"
+          test "$(git hash-object /tmp/popup.js)" = "f876cef9e5e7da31423e17b4f6d5d64717105a7d"
+          mv /tmp/background.js background.js
+          mv /tmp/content.js content.js
+          mv /tmp/popup.js popup.js
+      - name: Validate release
+        run: |
+          npm test
+          npm run check
+      - name: Commit exact validated runtime
+        shell: bash
+        run: |
+          rm -rf .release-exact .github/workflows/finalize-v22-exact.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Restore exact tested AutoPrompter 2.2 runtime"
+          git push origin HEAD:agent/per-chat-continuity-init
