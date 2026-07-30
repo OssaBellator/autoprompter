@@ -1,0 +1,93 @@
+ing the extension."); }
+  const byId = new Map(catalog.map(chat => [chat.id, chat]));
+  for (const chat of response?.chats || []) byId.set(chat.id, chat);
+  catalog = [...byId.values()].sort((left, right) => left.title.localeCompare(right.title));
+  await chrome.storage.local.set({ [CATALOG_KEY]: catalog });
+  elements.catalogHint.textContent = `${response?.chats?.length || 0} chats found in the current page. Scroll the ChatGPT sidebar and refresh again to collect more.`;
+  renderCatalog();
+}
+
+function selectedChats(settings, mode) {
+  return catalog.filter(chat => selectedIds.has(chat.id)).map(chat => ({ ...chat, settings: effectiveSettings(chat.id, settings, mode) }));
+}
+
+async function start(mode = "work") {
+  try {
+    const settings = await saveSettings();
+    const chats = selectedChats(settings, mode);
+    if (mode === "work") {
+      const missing = chats.filter(chat => chat.settings.continuityEnabled && !chat.settings.repository);
+      if (missing.length) throw new Error(`Add a repository for: ${missing.map(chat => chat.title).join(", ")}`);
+    }
+    if (mode === "initialize") {
+      const missing = chats.filter(chat => !chat.settings.repository);
+      if (missing.length) throw new Error(`Add a repository for: ${missing.map(chat => chat.title).join(", ")}`);
+    }
+    renderStatus(await runtimeMessage("START_SCHEDULER", { chats, settings, mode }));
+  } catch (error) {
+    renderStatus({ ok: false, error: error.message, running: false });
+  }
+}
+
+async function stop() {
+  try { renderStatus(await runtimeMessage("STOP_SCHEDULER")); }
+  catch (error) { renderStatus({ ok: false, error: error.message, running: false }); }
+}
+
+async function refreshState() {
+  try { renderStatus(await runtimeMessage("GET_SCHEDULER_STATE")); }
+  catch (error) { renderStatus({ ok: false, error: error.message, running: false }); }
+}
+
+async function saveChatEditor() {
+  const id = elements.chatConfigChat.value;
+  if (!id) return;
+  const config = {
+    prompt: elements.chatPrompt.value.trim(),
+    continuityMode: elements.chatContinuityMode.value,
+    repository: elements.chatRepository.value.trim(),
+    handoffFile: elements.chatHandoffFile.value.trim(),
+    pluginInstruction: elements.chatPluginInstruction.value.trim()
+  };
+  for (const key of Object.keys(config)) if (!config[key] || config[key] === "inherit") delete config[key];
+  if (Object.keys(config).length) chatConfigs[id] = config; else delete chatConfigs[id];
+  await persistChatConfigs();
+  renderCatalog();
+}
+
+async function clearChatEditor() {
+  const id = elements.chatConfigChat.value;
+  if (!id) return;
+  delete chatConfigs[id];
+  await persistChatConfigs();
+  loadChatEditor();
+  renderCatalog();
+}
+
+async function initialize() {
+  const stored = await chrome.storage.local.get([SETTINGS_KEY, CATALOG_KEY, SELECTION_KEY, CHAT_CONFIGS_KEY]);
+  fillSettings({ ...DEFAULTS, ...(stored[SETTINGS_KEY] || {}) });
+  catalog = Array.isArray(stored[CATALOG_KEY]) ? stored[CATALOG_KEY] : [];
+  selectedIds = new Set(Array.isArray(stored[SELECTION_KEY]) ? stored[SELECTION_KEY] : []);
+  chatConfigs = stored[CHAT_CONFIGS_KEY] && typeof stored[CHAT_CONFIGS_KEY] === "object" ? stored[CHAT_CONFIGS_KEY] : {};
+  renderCatalog();
+  await refreshState();
+}
+
+elements.refresh.addEventListener("click", () => refreshCatalog().catch(error => renderStatus({ ok: false, error: error.message })));
+elements.filter.addEventListener("input", renderCatalog);
+elements.selectAll.addEventListener("click", async () => { for (const chat of visibleCatalog()) selectedIds.add(chat.id); await persistSelection(); renderCatalog(); });
+elements.selectNone.addEventListener("click", async () => { selectedIds.clear(); await persistSelection(); renderCatalog(); });
+elements.start.addEventListener("click", () => start("work"));
+elements.initializeContinuity.addEventListener("click", () => start("initialize"));
+elements.stop.addEventListener("click", stop);
+elements.chatConfigChat.addEventListener("change", loadChatEditor);
+elements.saveChatConfig.addEventListener("click", () => saveChatEditor().catch(error => renderStatus({ ok: false, error: error.message })));
+elements.clearChatConfig.addEventListener("click", () => clearChatEditor().catch(error => renderStatus({ ok: false, error: error.message })));
+elements.continuityEnabled.addEventListener("change", () => { elements.continuityPanel.open = elements.continuityEnabled.checked; updateFieldAvailability(); saveSettings().catch(() => {}); });
+elements.notificationsEnabled.addEventListener("change", () => { updateFieldAvailability(); saveSettings().catch(() => {}); });
+for (const input of [elements.prompt, elements.delaySeconds, elements.maxContinuations, elements.notifyOnPromptDone, elements.repository, elements.handoffFile, elements.pluginInstruction, elements.contextCapacityTokens, elements.contextThresholdPercent, elements.stallMinutes, elements.maxRollovers, elements.checkpointBeforePrompt, elements.checkpointAfterPrompt]) input.addEventListener("change", () => saveSettings().catch(() => {}));
+
+initialize().catch(error => renderStatus({ ok: false, error: error.message }));
+const timer = setInterval(refreshState, 1000);
+addEventListener("unload", () => clearInterval(timer));
