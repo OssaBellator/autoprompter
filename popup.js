@@ -6,7 +6,7 @@ const CATALOG_KEY = "autoprompterChatCatalog";
 const SELECTION_KEY = "autoprompterSelectedChatIds";
 const DEFAULTS = Object.freeze({
   prompt: "Continue from where you left off. Do not repeat completed material.",
-  delaySeconds: 2,
+  delaySeconds: 10,
   maxContinuations: 5,
   notificationsEnabled: true,
   notifyOnPromptDone: true,
@@ -51,7 +51,7 @@ async function activeTab() {
 function formSettings() {
   return {
     prompt: elements.prompt.value.trim() || DEFAULTS.prompt,
-    delaySeconds: Math.min(120, Math.max(2, Number(elements.delaySeconds.value) || DEFAULTS.delaySeconds)),
+    delaySeconds: Math.min(120, Math.max(5, Number(elements.delaySeconds.value) || DEFAULTS.delaySeconds)),
     maxContinuations: Math.min(50, Math.max(1, Math.round(Number(elements.maxContinuations.value) || DEFAULTS.maxContinuations))),
     notificationsEnabled: elements.notificationsEnabled.checked,
     notifyOnPromptDone: elements.notifyOnPromptDone.checked,
