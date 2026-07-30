@@ -11,7 +11,8 @@ AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that cycles th
 - Conservative response-completion and composer-ownership checks.
 - Approximate visible-context monitoring with a configurable capacity and rollover threshold.
 - Optional repository checkpoints before and after work.
-- Automatic successor chats for context exhaustion, verified stalls, or content-loss signals—but only when a repository checkpoint marker is available.
+- Automatic successor chats for context exhaustion, verified prolonged stalls, or content-loss signals—but only when a repository checkpoint marker is available.
+- Incremental durability instructions that ask the selected repository tool to commit completed logical units before lengthy or risky work continues.
 - Global circuit breaker for rate limits, account restrictions, and safety blocks.
 
 ## Install in Edge
@@ -71,8 +72,8 @@ ChatGPT does not expose a stable browser API for exact per-conversation context 
 
 AutoPrompter classifies visible interruption messages conservatively:
 
-- **Context limit, prolonged stall, or content removal:** create a successor chat only when continuity is enabled and a verified checkpoint marker exists.
-- **Rate limit, temporary account restriction, or safety block:** stop the whole scheduler and notify the user.
+- **Context limit, prolonged stall, or content removal:** create a successor chat only when continuity is enabled and a verified checkpoint marker exists. Stuck-generation labels documented by OpenAI—`Thinking…`, `Generating…`, and `Working…`—must persist for the configured stall timeout before rollover.
+- **Suspicious activity, rate limit, temporary account restriction, or safety block:** stop the whole scheduler and notify the user. Documented restriction variants include `We detect suspicious activity.`, `Unusual Activity Detected`, `Unusual activity has been detected from your device. Try again later`, and `Sorry, you have been blocked`.
 - **Missing checkpoint:** stop and request manual review rather than opening a successor with guessed state.
 
 The extension intentionally does not rotate chats, models, accounts, or endpoints to evade a platform restriction.
