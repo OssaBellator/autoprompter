@@ -113,10 +113,50 @@
       </div>
       <div id="chatList" class="chat-list" role="listbox" aria-label="ChatGPT conversations"></div>
       <p id="catalogHint" class="hint">Open ChatGPT and press Refresh. The extension reads conversation links currently present in the sidebar.</p>
+
+      <details id="chatConfigPanel" class="continuity">
+        <summary>Per-chat prompt and repository overrides</summary>
+        <div class="details-body">
+          <label>
+            Chat
+            <select id="chatConfigChat"></select>
+          </label>
+          <label>
+            Follow-up prompt override
+            <textarea id="chatPrompt" rows="3" placeholder="Leave blank to use the global prompt"></textarea>
+          </label>
+          <label>
+            Continuity mode
+            <select id="chatContinuityMode">
+              <option value="inherit">Use global setting</option>
+              <option value="enabled">Enabled for this chat</option>
+              <option value="disabled">Disabled for this chat</option>
+            </select>
+          </label>
+          <label>
+            GitHub repository override
+            <input id="chatRepository" type="text" placeholder="Leave blank to use the global repository">
+          </label>
+          <label>
+            Continuity file override
+            <input id="chatHandoffFile" type="text" placeholder="Leave blank to use the global continuity file">
+          </label>
+          <label>
+            Plugin/tool instruction override
+            <textarea id="chatPluginInstruction" rows="2" placeholder="Leave blank to use the global instruction"></textarea>
+          </label>
+          <div class="inline-actions">
+            <button id="saveChatConfig" class="compact" type="button">Save override</button>
+            <button id="clearChatConfig" class="compact" type="button">Clear override</button>
+          </div>
+          <p class="hint">Blank values inherit the global settings. Initialization uses each chat's effective repository and continuity file.</p>
+        </div>
+      </details>
     </section>
 
     <div class="actions">
       <button id="start" class="primary" type="button">Start selected</button>
+      <button id="initializeContinuity" type="button">Initialize continuity</button>
       <button id="stop" type="button">Stop all</button>
     </div>
 

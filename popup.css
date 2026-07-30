@@ -11,13 +11,13 @@ header { margin-bottom: 14px; }
 h1 { margin: 0; font-size: 20px; }
 header p { margin: 3px 0 0; color: GrayText; font-size: 12px; }
 label { display: block; font-weight: 650; font-size: 12px; }
-textarea, input {
+textarea, input, select {
   width: 100%; margin-top: 6px; border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
   border-radius: 8px; background: Canvas; color: CanvasText; font: inherit;
 }
 textarea { resize: vertical; min-height: 72px; padding: 9px; line-height: 1.35; }
 input { padding: 8px; }
-textarea:focus, input:focus, button:focus-visible, summary:focus-visible { outline: 2px solid Highlight; outline-offset: 1px; }
+textarea:focus, input:focus, select:focus, button:focus-visible, summary:focus-visible { outline: 2px solid Highlight; outline-offset: 1px; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
 .options { margin-top: 12px; }
 .check-row { display: flex; align-items: flex-start; gap: 8px; font-weight: 600; margin-top: 8px; }
@@ -37,7 +37,7 @@ button {
   padding: 9px 12px; background: ButtonFace; color: ButtonText; font: inherit; font-weight: 650; cursor: pointer;
 }
 button.primary { border-color: transparent; background: #0f766e; color: white; }
-button:disabled, input:disabled, textarea:disabled { opacity: .5; cursor: default; }
+button:disabled, input:disabled, textarea:disabled, select:disabled { opacity: .5; cursor: default; }
 button.compact { padding: 6px 10px; font-size: 12px; }
 .filter { margin-top: 10px; }
 .bulk-actions { display: flex; gap: 12px; margin: 8px 1px 6px; }
@@ -62,3 +62,8 @@ button.compact { padding: 6px 10px; font-size: 12px; }
 .dot { width: 9px; height: 9px; margin-top: 4px; border-radius: 50%; background: GrayText; flex: 0 0 auto; }
 .dot.running { background: #0f9d58; }
 .dot.error { background: #d93025; }
+
+select { width: 100%; margin-top: 6px; padding: 8px; border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: 8px; background: Canvas; color: CanvasText; font: inherit; }
+.inline-actions { display: flex; gap: 8px; margin-top: 12px; }
+.inline-actions button { flex: 1; }
+.configured-badge { color: #0f766e; font-size: 10px; font-weight: 700; }
