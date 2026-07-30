@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "AutoPrompter for ChatGPT",
-  "version": "2.0.0",
-  "description": "Select multiple ChatGPT conversations and continue them automatically through one managed background tab.",
+  "version": "2.1.0",
+  "description": "Continue selected ChatGPT conversations, notify on completion, and use verified repository handoffs for successor chats.",
   "minimum_chrome_version": "102",
   "permissions": [
     "storage",
-    "tabs"
+    "tabs",
+    "notifications"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
