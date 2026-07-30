@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AutoPrompter</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>AutoPrompter</h1>
+        <p>Cycle through selected ChatGPT conversations</p>
+      </div>
+    </header>
+
+    <label for="prompt">Follow-up prompt</label>
+    <textarea id="prompt" rows="3" spellcheck="true"></textarea>
+
+    <div class="grid">
+      <label>
+        Delay (seconds)
+        <input id="delaySeconds" type="number" min="0.5" max="60" step="0.5">
+      </label>
+      <label>
+        Prompts per chat
+        <input id="maxContinuations" type="number" min="1" max="50" step="1">
+      </label>
+    </div>
+
+    <section class="picker">
+      <div class="picker-heading">
+        <div>
+          <strong>Selected chats</strong>
+          <small id="selectionSummary">No chats loaded</small>
+        </div>
+        <button id="refresh" class="compact" type="button">Refresh</button>
+      </div>
+      <input id="filter" class="filter" type="search" placeholder="Filter chats" aria-label="Filter chats">
+      <div class="bulk-actions">
+        <button id="selectAll" class="link-button" type="button">Select visible</button>
+        <button id="selectNone" class="link-button" type="button">Clear selection</button>
+      </div>
+      <div id="chatList" class="chat-list" role="listbox" aria-label="ChatGPT conversations"></div>
+      <p id="catalogHint" class="hint">Open ChatGPT and press Refresh. The extension reads conversation links currently present in the sidebar.</p>
+    </section>
+
+    <div class="actions">
+      <button id="start" class="primary" type="button">Start selected</button>
+      <button id="stop" type="button">Stop all</button>
+    </div>
+
+    <section class="status" aria-live="polite">
+      <span id="statusDot" class="dot"></span>
+      <div>
+        <strong id="statusText">Checking status…</strong>
+        <small id="statusDetail"></small>
+      </div>
+    </section>
+
+    <p class="note">AutoPrompter uses one inactive managed tab and visits the selected chats in round-robin order. Closing that tab stops the run.</p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
