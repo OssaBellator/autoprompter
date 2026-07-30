@@ -1,74 +1,116 @@
 # AutoPrompter for ChatGPT
 
-AutoPrompter is a Manifest V3 extension for Microsoft Edge that sends a configurable follow-up prompt after ChatGPT completes a response.
-
-Version 2 adds multi-chat scheduling: select conversations from the popup and the extension cycles through them with one inactive managed tab. You no longer need to keep one tab open for every automated conversation.
+AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that cycles through selected ChatGPT conversations using one inactive managed tab. It can notify you when work prompts complete and, when explicitly configured, create successor chats from verified Git repository checkpoints.
 
 ## Features
 
-- Discovers conversation links currently loaded in ChatGPT's sidebar.
-- Lets you select any combination of discovered chats.
-- Uses one managed background tab and processes selected chats in round-robin order.
-- Applies a configurable prompt, delay, and maximum prompt count to every selected chat.
-- Treats an already-completed response as immediately eligible.
-- Waits for the newly generated assistant response before moving to the next chat.
-- Pauses for a non-empty composer rather than overwriting a draft.
-- Refuses to submit an injected prompt if it was edited or its composer was replaced.
-- Stops the whole run when the managed tab is closed.
-- Stores settings and chat selections locally; runtime state is session-only.
-- Contains no analytics, remote code, or third-party network requests.
+- Discover chats currently loaded in the ChatGPT sidebar.
+- Select multiple conversations and process them round-robin through one managed tab.
+- Configurable work prompt, delay, and per-goal work-prompt limit.
+- Browser notifications for prompt completion, scheduler completion, errors, and handoffs.
+- Conservative response-completion and composer-ownership checks.
+- Approximate visible-context monitoring with a configurable capacity and rollover threshold.
+- Optional repository checkpoints before and after work.
+- Automatic successor chats for context exhaustion, verified stalls, or content-loss signals—but only when a repository checkpoint marker is available.
+- Global circuit breaker for rate limits, account restrictions, and safety blocks.
 
-## Install in Microsoft Edge
+## Install in Edge
 
 1. Clone or download this repository.
 2. Open `edge://extensions`.
 3. Enable **Developer mode**.
-4. Select **Load unpacked**.
-5. Choose the repository directory.
-6. Open ChatGPT and reload it once.
-7. Open the extension popup and press **Refresh**.
-8. Select the chats to process, configure the prompt, and press **Start selected**.
+4. Choose **Load unpacked**.
+5. Select the repository folder.
+6. Reload any open ChatGPT page.
 
-## Chat discovery
+## Select chats
 
-The ChatGPT sidebar may virtualize or lazily load conversation history. AutoPrompter collects links that are currently present in the page DOM. Scroll through the sidebar and press **Refresh** again to add more chats to the saved catalog.
+1. Open ChatGPT in a normal tab.
+2. Scroll the sidebar so the conversations you need are loaded.
+3. Open AutoPrompter and press **Refresh**.
+4. Select the conversations.
+5. Configure the work prompt and limits.
+6. Press **Start selected**.
 
-The catalog is retained locally, so a conversation does not need to remain visible in the sidebar after it has been discovered.
+The sidebar is virtualized, so the extension can discover only links present in the current page DOM. Repeatedly scroll and refresh to expand the saved local catalog.
 
-## Scheduler behavior
+## Notifications
 
-AutoPrompter creates one inactive managed ChatGPT tab. For each selected chat it:
+The extension requests the browser `notifications` permission. Notifications can be enabled globally and separately for each completed work prompt. A final notification is also sent when a run finishes or is stopped by an intervention.
 
-1. Opens the conversation.
-2. Waits for the latest assistant response to be complete.
-3. Waits for an empty composer and the configured delay.
-4. Submits the continuation prompt.
-5. Waits for the resulting assistant response to finish.
-6. Moves to the next selected conversation.
+## Repository continuity
 
-The scheduler repeats this round-robin process until every selected chat reaches the configured **Prompts per chat** limit. A failure in one conversation is recorded and the remaining selected chats continue.
+Repository continuity is optional and disabled by default.
+
+1. Enable **Verified repository handoffs**.
+2. Enter a GitHub repository as `owner/repository`.
+3. Choose a continuity file, normally `AUTOPROMPTER_HANDOFF.md`.
+4. Provide an instruction for an action-capable repository tool.
+5. Configure the estimated context capacity, rollover threshold, and stall timeout.
+6. Keep pre-work and post-work checkpoints enabled for the strongest recovery behavior.
+
+Each checkpoint prompt asks ChatGPT to commit completed work, update the continuity file, verify the remote commit, and return a marker:
+
+```text
+AUTOPROMPTER_CHECKPOINT: <commit-sha-or-immutable-ref>
+```
+
+A context handoff uses:
+
+```text
+AUTOPROMPTER_HANDOFF_READY: <commit-sha-or-immutable-ref>
+```
+
+The extension checks for the marker but cannot independently prove that a model or plugin performed the Git operation. Use an action-capable tool with least-privilege repository access. The standard read-only GitHub app cannot push changes; Codex or a purpose-built action-capable plugin/app is required for writes.
+
+## Context estimation
+
+ChatGPT does not expose a stable browser API for exact per-conversation context consumption. AutoPrompter estimates tokens from visible user and assistant text and compares the estimate with the capacity you configure. Attachments, hidden instructions, tool results, model-specific accounting, summarization, and unloaded messages can make the estimate inaccurate. Treat the threshold as an early-warning heuristic, not a precise meter.
+
+## Guardrails and interruptions
+
+AutoPrompter classifies visible interruption messages conservatively:
+
+- **Context limit, prolonged stall, or content removal:** create a successor chat only when continuity is enabled and a verified checkpoint marker exists.
+- **Rate limit, temporary account restriction, or safety block:** stop the whole scheduler and notify the user.
+- **Missing checkpoint:** stop and request manual review rather than opening a successor with guessed state.
+
+The extension intentionally does not rotate chats, models, accounts, or endpoints to evade a platform restriction.
+
+## Message usage
+
+With repository continuity enabled, one work cycle can use up to three messages:
+
+1. pre-work checkpoint
+2. work prompt
+3. post-work checkpoint
+
+This improves recovery but consumes allowances faster. Use a reasonable delay, low work-prompt limit, and the circuit breaker. Do not use the extension for unattended high-volume extraction or as a third-party service.
 
 ## Development
+
+Requires Node.js 20 or newer.
 
 ```bash
 npm test
 npm run check
 ```
 
-Main files:
+The tests cover URL and repository validation, scheduler eligibility, successor prompt construction, context rollover, marker parsing, and guardrail classification.
 
-- `manifest.json` — Manifest V3 permissions and entry points.
-- `background.js` — global multi-chat scheduler and managed-tab lifecycle.
-- `content.js` — chat discovery, completion detection, guarded composer injection, and one-shot job execution.
-- `popup.html`, `popup.css`, `popup.js` — settings, chat selection, and per-chat progress.
-- `tests/` — scheduler and response-change regression tests.
+## Future architecture
 
-## Limitations
+See [`docs/MULTI_AGENT_ROADMAP.md`](docs/MULTI_AGENT_ROADMAP.md) for a planned, supported-interface multi-agent design. It deliberately avoids implementing model-picker automation or temporary worker-chat orchestration in this release.
 
-This extension automates the ChatGPT website UI rather than a stable browser automation API. ChatGPT interface changes can require selector updates. Keep prompt limits conservative and supervise important work. Each automatic continuation consumes a normal ChatGPT message and remains subject to account limits and applicable terms.
+## Known limitations
 
-The managed tab is inactive, not invisible. Edge and ChatGPT must remain running while a schedule is active, and closing the managed tab stops the run.
+- ChatGPT DOM changes can break selectors.
+- A hidden/inactive tab may be throttled by the browser.
+- Context and guardrail detection are heuristic.
+- Notification delivery depends on browser and operating-system settings.
+- Plugin availability and capabilities vary by plan, workspace, region, and product surface.
+- A marker is an assistant/tool claim, not cryptographic verification by this extension.
 
 ## License
 
-Apache License 2.0. See `LICENSE`.
+Apache-2.0. See [`LICENSE`](LICENSE).
