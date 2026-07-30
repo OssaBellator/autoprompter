@@ -23,18 +23,24 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
+          import base64
           from pathlib import Path
 
           lines = Path('.github/workflows/apply-v22.yml').read_text(encoding='utf-8').splitlines()
-          markers = [index for index, line in enumerate(lines) if line.strip() == 'PAYLOAD']
-          if len(markers) != 2:
-              raise SystemExit(f'Expected two PAYLOAD markers, found {len(markers)}')
-          payload = ''.join(line.strip() for line in lines[markers[0] + 1:markers[1]])
-          if not payload:
-              raise SystemExit('Patch payload was empty')
-          Path('/tmp/v22.patch.gz.b64').write_text(payload + '\n', encoding='ascii')
+          starts = [index for index, line in enumerate(lines) if "<<'PAYLOAD'" in line]
+          if len(starts) != 1:
+              raise SystemExit(f'Expected one PAYLOAD opener, found {len(starts)}')
+          start = starts[0]
+          ends = [index for index in range(start + 1, len(lines)) if lines[index].strip() == 'PAYLOAD']
+          if len(ends) != 1:
+              raise SystemExit(f'Expected one PAYLOAD closer, found {len(ends)}')
+          payload = ''.join(line.strip() for line in lines[start + 1:ends[0]])
+          decoded = base64.b64decode(payload, validate=True)
+          if not decoded.startswith(b'\x1f\x8b'):
+              raise SystemExit('Decoded payload is not gzip data')
+          Path('/tmp/v22.patch.gz').write_bytes(decoded)
           PY
-          base64 -d /tmp/v22.patch.gz.b64 | gzip -d > /tmp/v22.patch
+          gzip -dc /tmp/v22.patch.gz > /tmp/v22.patch
           patch -p1 < /tmp/v22.patch
       - name: Validate
         run: |
