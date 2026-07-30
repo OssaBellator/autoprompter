@@ -1,0 +1,259 @@
+async function stopScheduler(reason = "Stopped", error = "", closeWorker = true, notifyUser = false) {
+  const state = await loadState();
+  if (!state) return publicState(null);
+
+  const stopped = {
+    ...state,
+    running: false,
+    token: Number(state.token || 0) + 1,
+    workerTabId: null,
+    currentJobId: null,
+    pendingSuccessor: null,
+    status: reason,
+    lastError: error,
+    pausedReason: error || reason
+  };
+  stopped.chats = (stopped.chats || []).map(chat => ({
+    ...chat,
+    status: chat.status === "Finished" || chat.retired || chat.failed ? chat.status : "Stopped"
+  }));
+  await saveState(stopped);
+
+  if (Number.isInteger(state.workerTabId)) {
+    try {
+      await chrome.tabs.sendMessage(state.workerTabId, {
+        type: "CANCEL_CHAT_JOB",
+        token: stopped.token
+      });
+    } catch {
+      // The page may be navigating.
+    }
+    if (closeWorker) await removeManagedTab(state.workerTabId);
+  }
+
+  if (notifyUser) await notify(stopped, "AutoPrompter stopped", error || reason, "stopped");
+  return publicState(stopped);
+}
+
+async function saveSuccessorToCatalog(chat) {
+  const stored = await chrome.storage.local.get([CATALOG_KEY, SELECTION_KEY]);
+  const catalog = Array.isArray(stored[CATALOG_KEY]) ? stored[CATALOG_KEY] : [];
+  const byId = new Map(catalog.map(item => [item.id, item]));
+  byId.set(chat.id, { id: chat.id, title: chat.title, url: chat.url });
+  const selected = new Set(Array.isArray(stored[SELECTION_KEY]) ? stored[SELECTION_KEY] : []);
+  selected.add(chat.id);
+  await chrome.storage.local.set({
+    [CATALOG_KEY]: [...byId.values()].sort((left, right) => left.title.localeCompare(right.title)),
+    [SELECTION_KEY]: [...selected]
+  });
+}
+
+async function sendCurrentJob(state) {
+  if (!state?.running || !Number.isInteger(state.workerTabId) || !state.currentJobId) return;
+
+  let tab;
+  try {
+    tab = await chrome.tabs.get(state.workerTabId);
+  } catch {
+    await stopScheduler("Stopped", "The managed ChatGPT tab was closed.", false, true);
+    return;
+  }
+
+  if (state.pendingSuccessor) {
+    if (!isNewChatUrl(tab.url || "")) return;
+    try {
+      await chrome.tabs.sendMessage(state.workerTabId, {
+        type: "RUN_SUCCESSOR_JOB",
+        token: state.token,
+        jobId: state.currentJobId,
+        parentChat: state.pendingSuccessor.parentChat,
+        settings: state.settings,
+        prompt: state.pendingSuccessor.prompt,
+        checkpoint: state.pendingSuccessor.checkpoint,
+        reason: state.pendingSuccessor.reason
+      });
+    } catch {
+      // The content script will announce readiness after navigation settles.
+    }
+    return;
+  }
+
+  const chat = state.chats?.[state.currentIndex];
+  if (!chat) return;
+  const current = normalizeConversationUrl(tab.url || "");
+  if (!current || current.id !== chat.id) return;
+
+  try {
+    await chrome.tabs.sendMessage(state.workerTabId, {
+      type: "RUN_CHAT_JOB",
+      token: state.token,
+      jobId: state.currentJobId,
+      chat: { ...chat },
+      settings: state.settings
+    });
+  } catch {
+    // The content script will announce readiness after navigation settles.
+  }
+}
+
+async function advanceScheduler(state) {
+  if (!state?.running) return publicState(state);
+
+  const nextIndex = nextEligibleIndex(
+    state.chats,
+    Number.isInteger(state.currentIndex) ? state.currentIndex : -1,
+    state.settings.maxContinuations
+  );
+
+  if (nextIndex < 0) {
+    const workerTabId = state.workerTabId;
+    state.running = false;
+    state.status = state.chats.some(chat => chat.failed)
+      ? "Finished with errors"
+      : "Finished";
+    state.workerTabId = null;
+    state.currentJobId = null;
+    state.pendingSuccessor = null;
+    state.chats = state.chats.map(chat => ({
+      ...chat,
+      status: chat.failed ? "Error" : (chat.retired ? chat.status : "Finished")
+    }));
+    await saveState(state);
+    await removeManagedTab(workerTabId);
+    await notify(state, "AutoPrompter finished", state.status, "finished");
+    return publicState(state);
+  }
+
+  const chat = state.chats[nextIndex];
+  const jobNumber = Number(chat.sentCount || 0) + 1;
+  state.currentIndex = nextIndex;
+  state.currentJobId = `${state.token}:${chat.id}:${jobNumber}:${Date.now()}`;
+  state.pendingSuccessor = null;
+  state.status = `Loading ${chat.title}`;
+  state.lastError = "";
+  state.pausedReason = "";
+  state.chats = state.chats.map((entry, index) => index === nextIndex
+    ? { ...entry, status: "Loading", lastError: "" }
+    : entry);
+  await saveState(state);
+
+  let tab;
+  try {
+    tab = await chrome.tabs.get(state.workerTabId);
+  } catch {
+    tab = null;
+  }
+
+  if (!tab) {
+    try {
+      tab = await chrome.tabs.create({ url: "about:blank", active: false });
+      state.workerTabId = tab.id;
+      await saveState(state);
+      await chrome.tabs.update(tab.id, { url: chat.url, active: false });
+    } catch (error) {
+      state.running = false;
+      state.workerTabId = null;
+      state.currentJobId = null;
+      state.status = "Stopped";
+      state.lastError = `Could not open the managed ChatGPT tab: ${error.message}`;
+      await saveState(state);
+      if (tab?.id) await removeManagedTab(tab.id);
+      await notify(state, "AutoPrompter stopped", state.lastError, "tab-error");
+    }
+    return publicState(state);
+  }
+
+  const current = normalizeConversationUrl(tab.url || "");
+  if (current?.id === chat.id && tab.status === "complete") {
+    await sendCurrentJob(state);
+  } else {
+    try {
+      await chrome.tabs.update(state.workerTabId, { url: chat.url, active: false });
+    } catch (error) {
+      return stopScheduler("Stopped", `Could not open ${chat.title}: ${error.message}`, true, true);
+    }
+  }
+  return publicState(state);
+}
+
+async function startScheduler(chats, settings) {
+  const normalizedSettings = normalizeSettings(settings);
+  if (settings?.continuityEnabled && !normalizedSettings.repository) {
+    throw new Error("Repository continuity requires a valid GitHub owner/repository value.");
+  }
+
+  const normalizedChats = [];
+  const seen = new Set();
+  for (const chat of Array.isArray(chats) ? chats : []) {
+    const normalized = normalizeChat(chat);
+    if (!normalized || seen.has(normalized.id)) continue;
+    seen.add(normalized.id);
+    normalizedChats.push(normalized);
+  }
+  if (normalizedChats.length === 0) throw new Error("Select at least one ChatGPT conversation.");
+
+  const previous = await loadState();
+  if (previous?.running) await stopScheduler("Restarted", "", true);
+
+  const state = {
+    running: true,
+    token: Math.max(Date.now(), Number(previous?.token || 0) + 2),
+    workerTabId: null,
+    currentIndex: -1,
+    currentJobId: null,
+    pendingSuccessor: null,
+    status: "Starting",
+    lastError: "",
+    pausedReason: "",
+    settings: normalizedSettings,
+    chats: normalizedChats,
+    handoffHistory: [],
+    startedAt: Date.now()
+  };
+  await clearBadge();
+  await saveState(state);
+  return advanceScheduler(state);
+}
+
+async function updateJobStatus(message, sender) {
+  const state = await loadState();
+  if (!state?.running || sender.tab?.id !== state.workerTabId) return publicState(state);
+  if (message.token !== state.token || message.jobId !== state.currentJobId) return publicState(state);
+
+  const chat = state.chats[state.currentIndex];
+  if (!chat) return publicState(state);
+  chat.status = String(message.status || "Working").slice(0, 160);
+  if (Number.isFinite(message.contextEstimateTokens)) chat.contextEstimateTokens = Math.round(message.contextEstimateTokens);
+  if (Number.isFinite(message.contextPercent)) chat.contextPercent = Math.round(message.contextPercent * 10) / 10;
+  state.status = `${chat.title}: ${chat.status}`;
+  await saveState(state);
+  return publicState(state);
+}
+
+async function finishJob(message, sender) {
+  const state = await loadState();
+  if (!state?.running || sender.tab?.id !== state.workerTabId) return publicState(state);
+  if (message.token !== state.token || message.jobId !== state.currentJobId) return publicState(state);
+
+  const chat = state.chats[state.currentIndex];
+  if (!chat) return publicState(state);
+  chat.sentCount = Number(chat.sentCount || 0) + 1;
+  chat.status = chat.sentCount >= state.settings.maxContinuations ? "Finished" : "Queued";
+  chat.lastError = "";
+  if (message.checkpoint) chat.lastCheckpoint = String(message.checkpoint).slice(0, 200);
+  if (Number.isFinite(message.contextEstimateTokens)) chat.contextEstimateTokens = Math.round(message.contextEstimateTokens);
+  if (Number.isFinite(message.contextPercent)) chat.contextPercent = Math.round(message.contextPercent * 10) / 10;
+  state.currentJobId = null;
+  await saveState(state);
+
+  if (state.settings.notifyOnPromptDone) {
+    await notify(
+      state,
+      `Prompt completed: ${chat.title}`,
+      `${chat.sentCount}/${state.settings.maxContinuations}${chat.lastCheckpoint ? ` · checkpoint ${chat.lastCheckpoint}` : ""}`,
+      `prompt-${chat.id}`
+    );
+  }
+  return advanceScheduler(state);
+}
+
