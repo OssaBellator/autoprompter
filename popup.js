@@ -7,11 +7,26 @@ const SELECTION_KEY = "autoprompterSelectedChatIds";
 const DEFAULTS = Object.freeze({
   prompt: "Continue from where you left off. Do not repeat completed material.",
   delaySeconds: 2,
-  maxContinuations: 5
+  maxContinuations: 5,
+  notificationsEnabled: true,
+  notifyOnPromptDone: true,
+  continuityEnabled: false,
+  repository: "",
+  handoffFile: "AUTOPROMPTER_HANDOFF.md",
+  pluginInstruction: "Use an action-capable repository plugin or Codex. The read-only GitHub app is not sufficient for commits.",
+  contextCapacityTokens: 128000,
+  contextThresholdPercent: 90,
+  stallMinutes: 15,
+  checkpointBeforePrompt: true,
+  checkpointAfterPrompt: true,
+  maxRollovers: 3
 });
 
 const elements = Object.fromEntries([
-  "prompt", "delaySeconds", "maxContinuations", "refresh", "filter", "selectAll", "selectNone",
+  "prompt", "delaySeconds", "maxContinuations", "notificationsEnabled", "notifyOnPromptDone",
+  "continuityPanel", "continuityEnabled", "repository", "handoffFile", "pluginInstruction",
+  "contextCapacityTokens", "contextThresholdPercent", "stallMinutes", "maxRollovers",
+  "checkpointBeforePrompt", "checkpointAfterPrompt", "refresh", "filter", "selectAll", "selectNone",
   "chatList", "catalogHint", "selectionSummary", "start", "stop", "statusDot", "statusText", "statusDetail"
 ].map(id => [id, document.getElementById(id)]));
 
@@ -36,15 +51,35 @@ async function activeTab() {
 function formSettings() {
   return {
     prompt: elements.prompt.value.trim() || DEFAULTS.prompt,
-    delaySeconds: Math.min(60, Math.max(0.5, Number(elements.delaySeconds.value) || DEFAULTS.delaySeconds)),
-    maxContinuations: Math.min(50, Math.max(1, Math.round(Number(elements.maxContinuations.value) || DEFAULTS.maxContinuations)))
+    delaySeconds: Math.min(120, Math.max(2, Number(elements.delaySeconds.value) || DEFAULTS.delaySeconds)),
+    maxContinuations: Math.min(50, Math.max(1, Math.round(Number(elements.maxContinuations.value) || DEFAULTS.maxContinuations))),
+    notificationsEnabled: elements.notificationsEnabled.checked,
+    notifyOnPromptDone: elements.notifyOnPromptDone.checked,
+    continuityEnabled: elements.continuityEnabled.checked,
+    repository: elements.repository.value.trim(),
+    handoffFile: elements.handoffFile.value.trim() || DEFAULTS.handoffFile,
+    pluginInstruction: elements.pluginInstruction.value.trim() || DEFAULTS.pluginInstruction,
+    contextCapacityTokens: Math.min(1000000, Math.max(16000, Math.round(Number(elements.contextCapacityTokens.value) || DEFAULTS.contextCapacityTokens))),
+    contextThresholdPercent: Math.min(98, Math.max(50, Number(elements.contextThresholdPercent.value) || DEFAULTS.contextThresholdPercent)),
+    stallMinutes: Math.min(180, Math.max(5, Number(elements.stallMinutes.value) || DEFAULTS.stallMinutes)),
+    checkpointBeforePrompt: elements.checkpointBeforePrompt.checked,
+    checkpointAfterPrompt: elements.checkpointAfterPrompt.checked,
+    maxRollovers: Math.min(10, Math.max(1, Math.round(Number(elements.maxRollovers.value) || DEFAULTS.maxRollovers)))
   };
 }
 
 function fillSettings(settings) {
-  elements.prompt.value = settings.prompt ?? DEFAULTS.prompt;
-  elements.delaySeconds.value = settings.delaySeconds ?? DEFAULTS.delaySeconds;
-  elements.maxContinuations.value = settings.maxContinuations ?? DEFAULTS.maxContinuations;
+  const merged = { ...DEFAULTS, ...settings };
+  for (const key of [
+    "prompt", "delaySeconds", "maxContinuations", "repository", "handoffFile", "pluginInstruction",
+    "contextCapacityTokens", "contextThresholdPercent", "stallMinutes", "maxRollovers"
+  ]) elements[key].value = merged[key];
+  for (const key of [
+    "notificationsEnabled", "notifyOnPromptDone", "continuityEnabled",
+    "checkpointBeforePrompt", "checkpointAfterPrompt"
+  ]) elements[key].checked = Boolean(merged[key]);
+  elements.continuityPanel.open = Boolean(merged.continuityEnabled);
+  updateFieldAvailability();
 }
 
 async function runtimeMessage(type, extra = {}) {
@@ -63,6 +98,22 @@ function visibleCatalog() {
   const query = elements.filter.value.trim().toLowerCase();
   if (!query) return catalog;
   return catalog.filter(chat => chat.title.toLowerCase().includes(query));
+}
+
+function updateFieldAvailability() {
+  const running = Boolean(schedulerState?.running);
+  const continuity = elements.continuityEnabled.checked;
+  const continuityFields = [
+    elements.repository, elements.handoffFile, elements.pluginInstruction, elements.contextCapacityTokens,
+    elements.contextThresholdPercent, elements.stallMinutes, elements.maxRollovers,
+    elements.checkpointBeforePrompt, elements.checkpointAfterPrompt
+  ];
+  for (const field of continuityFields) field.disabled = running || !continuity;
+  for (const field of [
+    elements.prompt, elements.delaySeconds, elements.maxContinuations, elements.notificationsEnabled,
+    elements.notifyOnPromptDone, elements.continuityEnabled
+  ]) field.disabled = running;
+  elements.notifyOnPromptDone.disabled = running || !elements.notificationsEnabled.checked;
 }
 
 function renderCatalog() {
@@ -96,8 +147,10 @@ function renderCatalog() {
     const runtime = mergedChatState(chat);
     const progress = document.createElement("span");
     progress.className = `chat-progress${runtime?.failed ? " error" : ""}`;
+    const context = runtime?.contextPercent ? ` · ctx≈${Number(runtime.contextPercent).toFixed(1)}%` : "";
+    const generation = runtime?.generation ? ` · gen ${runtime.generation + 1}` : "";
     progress.textContent = runtime
-      ? `${runtime.sentCount}/${schedulerState.settings.maxContinuations} · ${runtime.status}`
+      ? `${runtime.sentCount}/${schedulerState.settings.maxContinuations} · ${runtime.status}${context}${generation}`
       : "";
 
     row.append(checkbox, title, progress);
@@ -110,6 +163,7 @@ function renderCatalog() {
   elements.stop.disabled = !running;
   elements.selectAll.disabled = running;
   elements.selectNone.disabled = running;
+  updateFieldAvailability();
 }
 
 function renderStatus(state) {
@@ -122,7 +176,10 @@ function renderStatus(state) {
   const target = state?.chats?.length && state?.settings
     ? state.chats.length * state.settings.maxContinuations
     : 0;
-  elements.statusDetail.textContent = state?.lastError || (target ? `${total} of ${target} prompts sent · v${state.version}` : `v${chrome.runtime.getManifest().version}`);
+  const handoffs = state?.handoffHistory?.length ? ` · ${state.handoffHistory.length} handoff${state.handoffHistory.length === 1 ? "" : "s"}` : "";
+  elements.statusDetail.textContent = state?.lastError || state?.pausedReason || (target
+    ? `${total} of ${target} work prompts completed${handoffs} · v${state.version}`
+    : `v${chrome.runtime.getManifest().version}`);
   renderCatalog();
 }
 
@@ -153,6 +210,9 @@ async function refreshCatalog() {
 async function start() {
   try {
     const settings = await saveSettings();
+    if (settings.continuityEnabled && !settings.repository) {
+      throw new Error("Enter a GitHub repository before enabling continuity.");
+    }
     const chats = catalog.filter(chat => selectedIds.has(chat.id));
     const response = await runtimeMessage("START_SCHEDULER", { chats, settings });
     renderStatus(response);
@@ -200,9 +260,21 @@ elements.selectNone.addEventListener("click", async () => {
 });
 elements.start.addEventListener("click", start);
 elements.stop.addEventListener("click", stop);
-for (const input of [elements.prompt, elements.delaySeconds, elements.maxContinuations]) {
-  input.addEventListener("change", () => saveSettings().catch(() => {}));
-}
+elements.continuityEnabled.addEventListener("change", () => {
+  elements.continuityPanel.open = elements.continuityEnabled.checked;
+  updateFieldAvailability();
+  saveSettings().catch(() => {});
+});
+elements.notificationsEnabled.addEventListener("change", () => {
+  updateFieldAvailability();
+  saveSettings().catch(() => {});
+});
+for (const input of [
+  elements.prompt, elements.delaySeconds, elements.maxContinuations, elements.notifyOnPromptDone,
+  elements.repository, elements.handoffFile, elements.pluginInstruction, elements.contextCapacityTokens,
+  elements.contextThresholdPercent, elements.stallMinutes, elements.maxRollovers,
+  elements.checkpointBeforePrompt, elements.checkpointAfterPrompt
+]) input.addEventListener("change", () => saveSettings().catch(() => {}));
 
 initialize().catch(error => renderStatus({ ok: false, error: error.message }));
 const timer = setInterval(refreshState, 1000);
