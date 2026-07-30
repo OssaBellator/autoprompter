@@ -2,3 +2,4 @@
 *.sha256
 .DS_Store
 node_modules/
+.release-*/
