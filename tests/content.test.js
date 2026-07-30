@@ -22,6 +22,8 @@ const {
   estimateTokensFromText,
   shouldRolloverContext,
   classifyGuardrailText,
+  matureGuardrail,
+  buildDurableWorkPrompt,
   extractCheckpointMarker,
   extractHandoffMarker
 } = require("../content.js");
@@ -51,10 +53,44 @@ test("context rollover uses configured capacity and threshold", () => {
 });
 
 test("classifies circuit-breaker and rollover notices", () => {
-  assert.equal(classifyGuardrailText("System is thinking about this one").kind, "stalled");
+  assert.equal(classifyGuardrailText("Thinking…").kind, "stalled");
+  assert.equal(classifyGuardrailText("Generating...").kind, "stalled");
+  assert.equal(classifyGuardrailText("Working").kind, "stalled");
+  assert.equal(classifyGuardrailText("A warning | Thinking… | Another status").kind, "stalled");
+  assert.equal(classifyGuardrailText("We detect suspicious activity.").kind, "account_restriction");
+  assert.equal(classifyGuardrailText("Unusual Activity Detected").kind, "account_restriction");
+  assert.equal(classifyGuardrailText("Unusual activity has been detected from your device. Try again later").kind, "account_restriction");
+  assert.equal(classifyGuardrailText("Sorry, you have been blocked").kind, "account_restriction");
+  assert.equal(classifyGuardrailText("We've temporarily restricted your access to O1 Pro mode as we review for potential abuse.").kind, "account_restriction");
   assert.equal(classifyGuardrailText("You have reached your usage limit. Try again in 2 hours.").kind, "rate_limit");
   assert.equal(classifyGuardrailText("This conversation is too long. Start a new chat to continue.").kind, "context_limit");
   assert.equal(classifyGuardrailText("Your request was blocked for safety.").kind, "safety_restriction");
+  assert.equal(classifyGuardrailText("Your request was flagged as potentially violating our usage policy. Please try again with a different prompt.").kind, "safety_restriction");
+  assert.equal(classifyGuardrailText("This content may violate our Terms of Use or usage policies.").kind, "safety_restriction");
+  assert.equal(classifyGuardrailText("I was thinking about this one and then continued."), null);
+  assert.equal(classifyGuardrailText("The generating function is working correctly."), null);
+});
+
+test("stall guardrails mature only after the configured timeout", () => {
+  const notice = classifyGuardrailText("Thinking…");
+  const seen = new Map();
+  assert.equal(matureGuardrail(notice, { stallMinutes: 5 }, 1_000, seen), null);
+  assert.equal(matureGuardrail(notice, { stallMinutes: 5 }, 300_999, seen), null);
+  assert.equal(matureGuardrail(notice, { stallMinutes: 5 }, 301_000, seen).kind, "stalled");
+});
+
+test("durable work prompts require incremental repository commits", () => {
+  const prompt = buildDurableWorkPrompt({
+    continuityEnabled: true,
+    repository: "owner/repo",
+    handoffFile: "AUTOPROMPTER_HANDOFF.md",
+    pluginInstruction: "Use the repository tool.",
+    prompt: "Implement the next phase."
+  });
+  assert.match(prompt, /Commit each completed logical unit promptly/);
+  assert.match(prompt, /Do not leave completed implementation only in chat text/);
+  assert.match(prompt, /Implement the next phase/);
+  assert.equal(buildDurableWorkPrompt({ continuityEnabled: false, prompt: "Continue" }), "Continue");
 });
 
 test("extracts verified continuity markers", () => {
