@@ -300,7 +300,7 @@
   function enabledSendButton() {
     const button = firstVisible(SELECTORS.send);
     if (!button || button.disabled || button.getAttribute("aria-disabled") === "true") return null;
-    return  button;
+    return button;
   }
 
   function conversationInfo(value = location.href) {
@@ -568,7 +568,7 @@
 
   async function submitPrompt({
     prompt,
-     signal,
+    signal,
     status,
     settings,
     baseline,
@@ -908,7 +908,7 @@
         type: "JOB_ERROR",
         token: message.token,
         jobId: message.jobId,
-         error: error?.message || String(error)
+        error: error?.message || String(error)
       });
     }
   }

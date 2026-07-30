@@ -632,7 +632,7 @@ async function successorCreated(message, sender) {
 
   const info = normalizeConversationUrl(message.conversation?.url || "");
   if (!info || info.id !== message.conversation?.id) {
-     return stopScheduler("Successor creation failed", "The new ChatGPT conversation URL could not be verified.", true, true);
+    return stopScheduler("Successor creation failed", "The new ChatGPT conversation URL could not be verified.", true, true);
   }
 
   const parent = state.pendingSuccessor.parentChat;
