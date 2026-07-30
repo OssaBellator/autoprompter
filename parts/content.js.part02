@@ -1,0 +1,207 @@
+      const prototype = element.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+      if (setter) setter.call(element, text); else element.value = text;
+      element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      return;
+    }
+
+    const selection = getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    let inserted = false;
+    try { inserted = document.execCommand("insertText", false, text); } catch { inserted = false; }
+    if (!inserted) {
+      element.textContent = text;
+      element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    }
+  }
+
+  function clearOwnedComposer(element, owner) {
+    if (!element?.isConnected || element.getAttribute(OWNERSHIP_ATTR) !== owner) return;
+    if ("value" in element) element.value = ""; else element.textContent = "";
+    element.removeAttribute(OWNERSHIP_ATTR);
+    element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+  }
+
+  function buildCheckpointPrompt(settings, phase) {
+    return [
+      `Repository continuity checkpoint (${phase}). Do not start new project work in this response.`,
+      `Repository: ${settings.repository}`,
+      `Continuity file: ${settings.handoffFile}`,
+      settings.pluginInstruction,
+      "Commit every completed, reviewable change that currently exists. Update the continuity file with the goal, completed work, current branch, decisions, blockers, uncommitted work, and exact next steps.",
+      "Verify the commit exists remotely before claiming success.",
+      `End with exactly one machine-readable line: ${CHECKPOINT_PREFIX} <commit-sha-or-immutable-ref>`,
+      "If no action-capable repository tool is available or the commit cannot be verified, end with: AUTOPROMPTER_CHECKPOINT_FAILED: <reason>"
+    ].filter(Boolean).join("\n");
+  }
+
+  function buildHandoffPrompt(settings, reason, metrics) {
+    return [
+      "Prepare this project for continuation in a new chat. Do not begin new implementation work.",
+      `Repository: ${settings.repository}`,
+      `Continuity file: ${settings.handoffFile}`,
+      `Rollover reason: ${reason}`,
+      `Estimated visible context: ${Math.round(metrics.estimatedTokens)} tokens (${metrics.percent.toFixed(1)}% of the configured estimate).`,
+      settings.pluginInstruction,
+      "Commit all completed work and update the continuity file with: original goal, completed work, current branch and commit, changed files, decisions, tests, blockers, incomplete work, and a prioritized future-work checklist.",
+      "Verify the commit exists remotely. The repository is the source of truth for the successor chat.",
+      `End with exactly one machine-readable line: ${HANDOFF_PREFIX} <commit-sha-or-immutable-ref>`,
+      "If the repository cannot be updated and verified, end with: AUTOPROMPTER_HANDOFF_FAILED: <reason>"
+    ].filter(Boolean).join("\n");
+  }
+
+  async function submitPrompt({
+    prompt,
+    signal,
+    status,
+    settings,
+    baseline,
+    expectedConversationId,
+    allowConversationChange = false,
+    delaySeconds = settings.delaySeconds
+  }) {
+    let target = await waitForEmptyComposer(signal, status, settings, baseline);
+    await status(`Delaying ${delaySeconds}s`);
+    await sleep(delaySeconds * 1000, signal);
+
+    const currentAfterDelay = conversationInfo();
+    if (!allowConversationChange && expectedConversationId && currentAfterDelay?.id !== expectedConversationId) {
+      throw new Error("The conversation changed before submission.");
+    }
+    const interruption = detectInterruption(settings, baseline);
+    if (interruption) throw new JobInterruption(interruption.kind, interruption.message);
+    if (isGenerating()) throw new Error("ChatGPT started generating before the prompt was submitted.");
+    target = await waitForEmptyComposer(signal, status, settings, baseline);
+
+    const owner = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    target.setAttribute(OWNERSHIP_ATTR, owner);
+    dispatchInput(target, prompt);
+
+    try {
+      await status("Preparing prompt");
+      const button = await waitUntil(() => {
+        if (!target.isConnected) throw new Error("The composer was replaced before submission.");
+        if (target.getAttribute(OWNERSHIP_ATTR) !== owner || composerText(target) !== normalizeText(prompt)) {
+          throw new Error("The prompt was edited before submission; it was not sent.");
+        }
+        return enabledSendButton();
+      }, {
+        timeoutMs: 8000,
+        signal,
+        checkInterruption: () => detectInterruption(settings, baseline)
+      });
+
+      const beforeUsers = userCount();
+      button.click();
+      await status("Submitting prompt");
+      await waitUntil(() => {
+        const sent = userCount() > beforeUsers || isGenerating() || composerText(target) === "";
+        return sent ? true : null;
+      }, {
+        timeoutMs: 10000,
+        signal,
+        checkInterruption: () => detectInterruption(settings, baseline)
+      });
+      target.removeAttribute(OWNERSHIP_ATTR);
+    } catch (error) {
+      clearOwnedComposer(target, owner);
+      throw error;
+    }
+
+    await status("Waiting for the new response");
+    return waitForCompletedAssistant({
+      signal,
+      settings,
+      baseline,
+      requireChange: true,
+      timeoutMs: JOB_TIMEOUT_MS,
+      status
+    });
+  }
+
+  async function runCheckpoint({ settings, signal, status, phase, baseline, conversationId }) {
+    await status(`Checkpointing ${phase}`);
+    const completed = await submitPrompt({
+      prompt: buildCheckpointPrompt(settings, phase),
+      signal,
+      status,
+      settings,
+      baseline,
+      expectedConversationId: conversationId
+    });
+    if (/AUTOPROMPTER_CHECKPOINT_FAILED:/i.test(completed.text)) {
+      throw new Error("The repository checkpoint failed; automation stopped before continuing.");
+    }
+    const marker = extractCheckpointMarker(completed.text);
+    if (!marker) throw new Error("The checkpoint response did not include a verified checkpoint marker.");
+    return { marker, completed };
+  }
+
+  async function executeJob(message, controller) {
+    const signal = controller.signal;
+    let checkpoint = String(message.chat.lastCheckpoint || "");
+    const status = (value, metrics = null) => runtimeMessage({
+      type: "JOB_STATUS",
+      token: message.token,
+      jobId: message.jobId,
+      status: value,
+      contextEstimateTokens: metrics?.estimatedTokens,
+      contextPercent: metrics?.percent
+    });
+
+    try {
+      const current = conversationInfo();
+      if (!current || current.id !== message.chat.id) throw new Error("The managed tab opened a different conversation.");
+
+      await status("Waiting for completion");
+      let baseline = await waitForCompletedAssistant({ signal, settings: message.settings, status });
+      let metrics = contextMetrics(message.settings);
+      await status(`Context estimate ${metrics.percent.toFixed(1)}%`, metrics);
+
+      if (shouldRolloverContext(
+        metrics.estimatedTokens,
+        message.settings.contextCapacityTokens,
+        message.settings.contextThresholdPercent
+      )) {
+        if (!message.settings.continuityEnabled) {
+          throw new JobInterruption(
+            "context_limit",
+            `Estimated context reached ${metrics.percent.toFixed(1)}%, but repository continuity is disabled.`
+          );
+        }
+        if (message.settings.checkpointBeforePrompt) {
+          const pre = await runCheckpoint({
+            settings: message.settings,
+            signal,
+            status,
+            phase: "before handoff",
+            baseline,
+            conversationId: message.chat.id
+          });
+          checkpoint = pre.marker;
+          baseline = pre.completed;
+        }
+
+        await status("Preparing repository handoff", metrics);
+        const handoff = await submitPrompt({
+          prompt: buildHandoffPrompt(
+            message.settings,
+            `Configured context threshold ${message.settings.contextThresholdPercent}% reached`,
+            metrics
+          ),
+          signal,
+          status,
+          settings: message.settings,
+          baseline,
+          expectedConversationId: message.chat.id
+        });
+        if (/AUTOPROMPTER_HANDOFF_FAILED:/i.test(handoff.text)) {
+          throw new Error("The repository handoff failed; no successor chat was opened.");
+        }
+        checkpoint = extractHandoffMarker(handoff.text) || extractCheckpointMarker(handoff.text);
+        if (!checkpoint) throw new Error("The handoff response did not include a verified repository marker.");
+        metrics = contextMetrics(message.settings);
