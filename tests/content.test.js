@@ -24,6 +24,7 @@ const {
   classifyGuardrailText,
   matureGuardrail,
   buildDurableWorkPrompt,
+  buildInitializationPrompt,
   extractCheckpointMarker,
   extractHandoffMarker
 } = require("../content.js");
@@ -97,4 +98,28 @@ test("extracts verified continuity markers", () => {
   assert.equal(extractCheckpointMarker("AUTOPROMPTER_CHECKPOINT: abcdef123456"), "abcdef123456");
   assert.equal(extractHandoffMarker("AUTOPROMPTER_HANDOFF_READY: release/v2.1.0"), "release/v2.1.0");
   assert.equal(extractCheckpointMarker("AUTOPROMPTER_CHECKPOINT_FAILED: no tool"), "");
+});
+
+
+test("normal discussion of safeguards does not trip the circuit breaker", () => {
+  const prose = "The implementation should account for rate limits, account restrictions, and safety blocks without bypassing them.";
+  assert.equal(classifyGuardrailText(prose, "assistant"), null);
+  assert.equal(classifyGuardrailText("Rate limits, account restrictions, and safety blocks stop the scheduler instead of opening another chat.", "notice"), null);
+});
+
+test("exact platform restriction messages still trip the circuit breaker", () => {
+  assert.equal(classifyGuardrailText("Unusual Activity Detected", "notice").kind, "account_restriction");
+  assert.equal(classifyGuardrailText("Too many requests.", "notice").kind, "rate_limit");
+  assert.equal(classifyGuardrailText("Your request was blocked", "assistant").kind, "safety_restriction");
+});
+
+test("continuity initialization prompt creates and verifies durable state", () => {
+  const prompt = buildInitializationPrompt({
+    repository: "owner/project",
+    handoffFile: "AUTOPROMPTER_HANDOFF.md",
+    pluginInstruction: "Use Codex."
+  });
+  assert.match(prompt, /Create the continuity file if it does not exist/);
+  assert.match(prompt, /AUTOPROMPTER_CHECKPOINT:/);
+  assert.match(prompt, /Verify the commit exists remotely/);
 });
