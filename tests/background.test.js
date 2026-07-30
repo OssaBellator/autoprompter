@@ -101,3 +101,24 @@ test("successor prompt anchors work to repository state", () => {
   assert.match(prompt, /abc1234/);
   assert.match(prompt, /source of truth/);
 });
+
+
+test("chat-specific settings override global prompt and repository", () => {
+  const chat = normalizeChat({
+    id: "abc",
+    url: "https://chatgpt.com/c/abc",
+    title: "Configured",
+    settings: { prompt: "Per chat", repository: "other/repo", continuityEnabled: true }
+  }, { prompt: "Global", repository: "owner/repo", continuityEnabled: true });
+  assert.equal(chat.settings.prompt, "Per chat");
+  assert.equal(chat.settings.repository, "other/repo");
+  assert.equal(chat.settings.continuityEnabled, true);
+});
+
+test("scheduler eligibility respects per-chat work limits", () => {
+  const chats = [
+    { failed: false, retired: false, sentCount: 1, settings: { maxContinuations: 1 } },
+    { failed: false, retired: false, sentCount: 1, settings: { maxContinuations: 2 } }
+  ];
+  assert.equal(nextEligibleIndex(chats, -1, 5), 1);
+});
