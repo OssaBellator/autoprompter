@@ -36,7 +36,7 @@ test("normalizes settings and clamps limits", () => {
     stallMinutes: 1
   });
   assert.equal(settings.prompt, "go");
-  assert.equal(settings.delaySeconds, 2);
+  assert.equal(settings.delaySeconds, 5);
   assert.equal(settings.maxContinuations, 50);
   assert.equal(settings.contextThresholdPercent, 98);
   assert.equal(settings.stallMinutes, 5);
