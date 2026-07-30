@@ -10,7 +10,7 @@ const NOTIFICATION_ICON_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg
 
 const DEFAULTS = Object.freeze({
   prompt: "Continue from where you left off. Do not repeat completed material.",
-  delaySeconds: 2,
+  delaySeconds: 10,
   maxContinuations: 5,
   notificationsEnabled: true,
   notifyOnPromptDone: true,
@@ -68,7 +68,7 @@ function normalizeSettings(settings = {}) {
     prompt: typeof settings.prompt === "string" && settings.prompt.trim()
       ? settings.prompt.trim().slice(0, 12000)
       : DEFAULTS.prompt,
-    delaySeconds: clampNumber(settings.delaySeconds, DEFAULTS.delaySeconds, 2, 120),
+    delaySeconds: clampNumber(settings.delaySeconds, DEFAULTS.delaySeconds, 5, 120),
     maxContinuations: Math.round(
       clampNumber(settings.maxContinuations, DEFAULTS.maxContinuations, 1, 50)
     ),
