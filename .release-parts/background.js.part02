@@ -1,0 +1,108 @@
+  return stopScheduler("Successor creation failed", "The new ChatGPT conversation URL could not be verified.", true, true);
+  }
+
+  const parent = state.pendingSuccessor.parentChat;
+  const successor = {
+    ...parent,
+    id: info.id,
+    url: info.url,
+    title: `${parent.title} · continued ${Number(parent.generation || 0) + 1}`.slice(0, 160),
+    sentCount: Number(parent.sentCount || 0) + 1,
+    status: "Queued",
+    lastError: "",
+    failed: false,
+    retired: false,
+    generation: Number(parent.generation || 0) + 1,
+    rolloverCount: Number(parent.rolloverCount || 0),
+    lastCheckpoint: String(message.checkpoint || state.pendingSuccessor.checkpoint || "").slice(0, 200),
+    contextEstimateTokens: Number(message.contextEstimateTokens || 0),
+    contextPercent: Number(message.contextPercent || 0)
+  };
+
+  state.handoffHistory = [...(state.handoffHistory || []), {
+    id: parent.id,
+    title: parent.title,
+    url: parent.url,
+    successorId: successor.id,
+    checkpoint: state.pendingSuccessor.checkpoint,
+    reason: state.pendingSuccessor.reason,
+    at: Date.now()
+  }].slice(-50);
+  state.chats[state.currentIndex] = successor;
+  state.pendingSuccessor = null;
+  state.currentJobId = null;
+  state.status = `Successor created for ${parent.title}`;
+  await saveState(state);
+  await saveSuccessorToCatalog(successor, parent.id);
+  await notify(state, "Successor chat ready", `${successor.title} · checkpoint ${successor.lastCheckpoint}`, `successor-${successor.id}`);
+  return advanceScheduler(state);
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.scope !== MESSAGE_SCOPE) return false;
+
+  const operation = async () => {
+    switch (message.type) {
+      case "GET_SCHEDULER_STATE":
+        return publicState(await loadState());
+      case "START_SCHEDULER":
+        return startScheduler(message.chats, message.settings, message.mode);
+      case "STOP_SCHEDULER":
+        return stopScheduler("Stopped by user", "", true);
+      case "CONTENT_READY": {
+        const state = await loadState();
+        if (state?.running && sender.tab?.id === state.workerTabId) await sendCurrentJob(state);
+        return publicState(state);
+      }
+      case "JOB_STATUS":
+        return updateJobStatus(message, sender);
+      case "JOB_DONE":
+        return finishJob(message, sender);
+      case "JOB_ERROR":
+        return failJob(message, sender);
+      case "JOB_INTERRUPTED":
+      case "JOB_ROLLOVER":
+        return interruptJob(message, sender);
+      case "SUCCESSOR_CREATED":
+        return successorCreated(message, sender);
+      default:
+        return { running: false, status: "Unknown command" };
+    }
+  };
+
+  enqueue(operation)
+    .then(result => sendResponse({ ok: true, ...result }))
+    .catch(error => sendResponse({ ok: false, error: error.message }));
+  return true;
+});
+
+chrome.tabs.onRemoved.addListener(tabId => {
+  enqueue(async () => {
+    const state = await loadState();
+    if (state?.running && state.workerTabId === tabId) {
+      await stopScheduler("Stopped", "The managed ChatGPT tab was closed.", false, true);
+    }
+  }).catch(() => {});
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status !== "complete") return;
+  enqueue(async () => {
+    const state = await loadState();
+    if (state?.running && state.workerTabId === tabId) await sendCurrentJob(state);
+  }).catch(() => {});
+});
+
+if (typeof module !== "undefined") {
+  module.exports = {
+    DEFAULTS,
+    normalizeSettings,
+    normalizeRepository,
+    normalizeHandoffFile,
+    normalizeConversationUrl,
+    isNewChatUrl,
+    normalizeChat,
+    nextEligibleIndex,
+    buildSuccessorPrompt
+  };
+}
