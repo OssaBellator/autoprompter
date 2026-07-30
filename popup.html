@@ -11,7 +11,7 @@
     <header>
       <div>
         <h1>AutoPrompter</h1>
-        <p>Cycle through selected ChatGPT conversations</p>
+        <p>Continue selected chats through one managed tab</p>
       </div>
     </header>
 
@@ -21,13 +21,82 @@
     <div class="grid">
       <label>
         Delay (seconds)
-        <input id="delaySeconds" type="number" min="0.5" max="60" step="0.5">
+        <input id="delaySeconds" type="number" min="2" max="120" step="1">
       </label>
       <label>
-        Prompts per chat
+        Work prompts per goal
         <input id="maxContinuations" type="number" min="1" max="50" step="1">
       </label>
     </div>
+
+    <section class="options">
+      <label class="check-row">
+        <input id="notificationsEnabled" type="checkbox">
+        <span>Browser notifications</span>
+      </label>
+      <label class="check-row nested">
+        <input id="notifyOnPromptDone" type="checkbox">
+        <span>Notify after each completed work prompt</span>
+      </label>
+    </section>
+
+    <details id="continuityPanel" class="continuity">
+      <summary>Repository continuity and successor chats</summary>
+      <div class="details-body">
+        <label class="check-row">
+          <input id="continuityEnabled" type="checkbox">
+          <span>Enable verified repository handoffs</span>
+        </label>
+
+        <label>
+          GitHub repository
+          <input id="repository" type="text" placeholder="owner/repository" autocomplete="off">
+        </label>
+
+        <label>
+          Continuity file
+          <input id="handoffFile" type="text" placeholder="AUTOPROMPTER_HANDOFF.md" autocomplete="off">
+        </label>
+
+        <label>
+          Plugin/tool instruction
+          <textarea id="pluginInstruction" rows="3" spellcheck="true"></textarea>
+        </label>
+
+        <div class="grid">
+          <label>
+            Estimated context tokens
+            <input id="contextCapacityTokens" type="number" min="16000" max="1000000" step="1000">
+          </label>
+          <label>
+            Rollover threshold (%)
+            <input id="contextThresholdPercent" type="number" min="50" max="98" step="1">
+          </label>
+        </div>
+
+        <div class="grid">
+          <label>
+            Stall timeout (minutes)
+            <input id="stallMinutes" type="number" min="5" max="180" step="1">
+          </label>
+          <label>
+            Maximum successor chats
+            <input id="maxRollovers" type="number" min="1" max="10" step="1">
+          </label>
+        </div>
+
+        <label class="check-row">
+          <input id="checkpointBeforePrompt" type="checkbox">
+          <span>Checkpoint before new work</span>
+        </label>
+        <label class="check-row">
+          <input id="checkpointAfterPrompt" type="checkbox">
+          <span>Checkpoint after completed work</span>
+        </label>
+
+        <p class="warning">Context usage is estimated from visible text. Automatic rollover requires a verified checkpoint marker from an action-capable repository tool. Rate limits, account restrictions, and safety blocks stop the scheduler instead of opening another chat.</p>
+      </div>
+    </details>
 
     <section class="picker">
       <div class="picker-heading">
@@ -59,7 +128,7 @@
       </div>
     </section>
 
-    <p class="note">AutoPrompter uses one inactive managed tab and visits the selected chats in round-robin order. Closing that tab stops the run.</p>
+    <p class="note">Repository continuity can add two checkpoint prompts around each work prompt. This improves recoverability but consumes more of your message allowance.</p>
   </main>
   <script src="popup.js"></script>
 </body>
