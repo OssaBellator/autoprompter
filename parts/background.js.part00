@@ -1,0 +1,246 @@
+"use strict";
+
+const MESSAGE_SCOPE = "AUTOPROMPTER_RUNTIME";
+const SESSION_KEY = "autoprompterScheduler";
+const SETTINGS_KEY = "autoprompterSettings";
+const CATALOG_KEY = "autoprompterChatCatalog";
+const SELECTION_KEY = "autoprompterSelectedChatIds";
+const NEW_CHAT_URL = "https://chatgpt.com/";
+const NOTIFICATION_ICON_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABPUlEQVR4nO2ZMQ7CQAwEF0QPL4UO3kDJT/kBVCehFChxfDeWbqfPaT34HKMczvfrRxNzpAPQWAAdgMYC6AA0FkAHoLEAOgCNBdABaCyADkBzyjjk/XxlHBPi8rjtev6w5+8wWfiSqIjwFahUvBTPExJQrfhGJNf0Q3CzgKq/fmNrPncAHYDGAugANCmb4JK929k/sodwegf0LL7H+dNfAQvIPrD3opR9fpchWH1b/MVXgA5AM72AsovQqDlSdhHqvVA1pr8CFpB9YNbdHTUDvAjRAWgsYOsDo15PUbbmcwdEHqraBZFc4Q6oJiGaZ9fX4ca0n8fXsFYO1VElhiB5nXAB9CxBBdDFS6CACsVLkIAqxUuAgErFS4MFVCteGiigYvHSIAFVi5cGbILVwRchGgugA9BYAB2AxgLoADRfdOpG+jsXCCIAAAAASUVORK5CYII=";
+
+const DEFAULTS = Object.freeze({
+  prompt: "Continue from where you left off. Do not repeat completed material.",
+  delaySeconds: 10,
+  maxContinuations: 5,
+  notificationsEnabled: true,
+  notifyOnPromptDone: true,
+  continuityEnabled: false,
+  repository: "",
+  handoffFile: "AUTOPROMPTER_HANDOFF.md",
+  pluginInstruction: "Use an action-capable repository plugin or Codex. The read-only GitHub app is not sufficient for commits.",
+  contextCapacityTokens: 128000,
+  contextThresholdPercent: 90,
+  stallMinutes: 15,
+  checkpointBeforePrompt: true,
+  checkpointAfterPrompt: true,
+  maxRollovers: 3
+});
+
+let operationQueue = Promise.resolve();
+
+function enqueue(operation) {
+  operationQueue = operationQueue.catch(() => {}).then(operation);
+  return operationQueue;
+}
+
+function clampNumber(value, fallback, min, max) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function normalizeRepository(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  let candidate = raw;
+  try {
+    if (/^https?:\/\//i.test(raw)) {
+      const url = new URL(raw);
+      if (url.hostname !== "github.com" && url.hostname !== "www.github.com") return "";
+      candidate = url.pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "");
+    }
+  } catch {
+    return "";
+  }
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(candidate)) return "";
+  return candidate;
+}
+
+function normalizeHandoffFile(value) {
+  const file = String(value || DEFAULTS.handoffFile).trim().replace(/^\/+/, "");
+  if (!file || file.includes("..") || !/^[A-Za-z0-9_./-]+$/.test(file)) return DEFAULTS.handoffFile;
+  return file.slice(0, 200);
+}
+
+function normalizeSettings(settings = {}) {
+  const repository = normalizeRepository(settings.repository);
+  return {
+    prompt: typeof settings.prompt === "string" && settings.prompt.trim()
+      ? settings.prompt.trim().slice(0, 12000)
+      : DEFAULTS.prompt,
+    delaySeconds: clampNumber(settings.delaySeconds, DEFAULTS.delaySeconds, 5, 120),
+    maxContinuations: Math.round(
+      clampNumber(settings.maxContinuations, DEFAULTS.maxContinuations, 1, 50)
+    ),
+    notificationsEnabled: settings.notificationsEnabled !== false,
+    notifyOnPromptDone: settings.notifyOnPromptDone !== false,
+    continuityEnabled: Boolean(settings.continuityEnabled && repository),
+    repository,
+    handoffFile: normalizeHandoffFile(settings.handoffFile),
+    pluginInstruction: String(settings.pluginInstruction || DEFAULTS.pluginInstruction).trim().slice(0, 1000),
+    contextCapacityTokens: Math.round(clampNumber(
+      settings.contextCapacityTokens,
+      DEFAULTS.contextCapacityTokens,
+      16000,
+      1000000
+    )),
+    contextThresholdPercent: clampNumber(
+      settings.contextThresholdPercent,
+      DEFAULTS.contextThresholdPercent,
+      50,
+      98
+    ),
+    stallMinutes: clampNumber(settings.stallMinutes, DEFAULTS.stallMinutes, 5, 180),
+    checkpointBeforePrompt: settings.checkpointBeforePrompt !== false,
+    checkpointAfterPrompt: settings.checkpointAfterPrompt !== false,
+    maxRollovers: Math.round(clampNumber(settings.maxRollovers, DEFAULTS.maxRollovers, 1, 10))
+  };
+}
+
+function normalizeConversationUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.hostname !== "chatgpt.com" && url.hostname !== "chat.openai.com") return null;
+    const match = url.pathname.match(/(?:^|\/)c\/([^/?#]+)/);
+    if (!match) return null;
+    return {
+      id: decodeURIComponent(match[1]),
+      url: `https://chatgpt.com/c/${encodeURIComponent(decodeURIComponent(match[1]))}`
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isNewChatUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.hostname !== "chatgpt.com" && url.hostname !== "chat.openai.com") return false;
+    return !/(?:^|\/)c\/[^/?#]+/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function normalizeChat(chat) {
+  const normalized = normalizeConversationUrl(chat?.url || "");
+  if (!normalized) return null;
+  const suppliedId = String(chat?.id || normalized.id);
+  if (suppliedId !== normalized.id) return null;
+  return {
+    id: normalized.id,
+    title: String(chat?.title || "Untitled chat").trim().slice(0, 160) || "Untitled chat",
+    url: normalized.url,
+    sentCount: 0,
+    status: "Queued",
+    lastError: "",
+    failed: false,
+    retired: false,
+    chainId: normalized.id,
+    generation: 0,
+    rolloverCount: 0,
+    lastCheckpoint: "",
+    contextEstimateTokens: 0,
+    contextPercent: 0
+  };
+}
+
+function nextEligibleIndex(chats, currentIndex, maxContinuations) {
+  if (!Array.isArray(chats) || chats.length === 0) return -1;
+  for (let offset = 1; offset <= chats.length; offset += 1) {
+    const index = (currentIndex + offset + chats.length) % chats.length;
+    const chat = chats[index];
+    if (!chat.failed && !chat.retired && Number(chat.sentCount || 0) < maxContinuations) return index;
+  }
+  return -1;
+}
+
+function buildSuccessorPrompt(settings, chat, checkpoint, reason) {
+  const reasonText = String(reason || "the previous chat reached a continuity boundary").slice(0, 500);
+  return [
+    "Continue the same project goal from the previous chat.",
+    `Repository: ${settings.repository}`,
+    `Continuity file: ${settings.handoffFile}`,
+    checkpoint ? `Last verified checkpoint: ${checkpoint}` : "Last verified checkpoint: not supplied",
+    `Reason for rollover: ${reasonText}`,
+    "",
+    settings.pluginInstruction,
+    "Read the repository and continuity file before taking action. Treat committed repository state as the source of truth.",
+    "Verify the active branch, latest commit, completed work, remaining work, blockers, and next safe task.",
+    "Do not reconstruct missing work from guesses and do not repeat completed tasks.",
+    "Continue with the next unfinished task, then update the continuity file and commit completed work before finishing."
+  ].filter(Boolean).join("\n");
+}
+
+function publicState(state) {
+  const version = chrome.runtime.getManifest().version;
+  if (!state) return {
+    running: false,
+    status: "Stopped",
+    chats: [],
+    settings: { ...DEFAULTS },
+    handoffHistory: [],
+    version
+  };
+
+  return {
+    running: Boolean(state.running),
+    status: state.status || "Stopped",
+    lastError: state.lastError || "",
+    pausedReason: state.pausedReason || "",
+    workerTabId: state.workerTabId ?? null,
+    currentIndex: Number.isInteger(state.currentIndex) ? state.currentIndex : -1,
+    chats: Array.isArray(state.chats) ? state.chats : [],
+    settings: normalizeSettings(state.settings),
+    startedAt: state.startedAt || null,
+    pendingSuccessor: state.pendingSuccessor || null,
+    handoffHistory: Array.isArray(state.handoffHistory) ? state.handoffHistory : [],
+    version
+  };
+}
+
+async function loadState() {
+  const stored = await chrome.storage.session.get(SESSION_KEY);
+  return stored?.[SESSION_KEY] || null;
+}
+
+async function saveState(state) {
+  await chrome.storage.session.set({
+    [SESSION_KEY]: { ...state, savedAt: Date.now() }
+  });
+}
+
+async function notify(state, title, message, idSuffix = "event") {
+  if (!state?.settings?.notificationsEnabled) return;
+  const notificationId = `autoprompter-${idSuffix}-${Date.now()}`;
+  try {
+    await chrome.notifications.create(notificationId, {
+      type: "basic",
+      iconUrl: NOTIFICATION_ICON_DATA_URL,
+      title: String(title).slice(0, 120),
+      message: String(message).slice(0, 500),
+      priority: 0
+    });
+  } catch {
+    try {
+      await chrome.action.setBadgeBackgroundColor({ color: "#b42318" });
+      await chrome.action.setBadgeText({ text: "!" });
+    } catch {
+      // Notifications and badges are best-effort.
+    }
+  }
+}
+
+async function clearBadge() {
+  try { await chrome.action.setBadgeText({ text: "" }); } catch { /* best-effort */ }
+}
+
+async function removeManagedTab(tabId) {
+  if (!Number.isInteger(tabId)) return;
+  try {
+    await chrome.tabs.remove(tabId);
+  } catch {
+    // The user may already have closed the tab.
+  }
+}
+
