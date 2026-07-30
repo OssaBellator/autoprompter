@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AutoPrompter for ChatGPT",
-  "version": "2.1.0",
-  "description": "Continue selected ChatGPT conversations, notify on completion, and use verified repository handoffs for successor chats.",
+  "version": "2.2.0",
+  "description": "Continue selected ChatGPT conversations with per-chat prompts, continuity initialization, notifications, and guarded repository handoffs.",
   "minimum_chrome_version": "102",
   "permissions": [
     "storage",
@@ -26,7 +26,9 @@
         "https://chatgpt.com/*",
         "https://chat.openai.com/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ]
