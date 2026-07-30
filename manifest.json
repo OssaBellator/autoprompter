@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "AutoPrompter for ChatGPT",
+  "version": "2.0.0",
+  "description": "Select multiple ChatGPT conversations and continue them automatically through one managed background tab.",
+  "minimum_chrome_version": "102",
+  "permissions": [
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*"
+  ],
+  "action": {
+    "default_title": "AutoPrompter",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
