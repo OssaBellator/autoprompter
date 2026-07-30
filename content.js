@@ -119,47 +119,49 @@
     return (Number(estimatedTokens || 0) / capacity) * 100 >= threshold;
   }
 
-  function classifyGuardrailText(value) {
+  function classifyGuardrailText(value, source = "notice") {
     const text = normalizeText(value);
     if (!text) return null;
 
-    // Live regions can be concatenated with separators. Match generation status
-    // labels as complete segments, never as substrings of ordinary prose.
+    // Generation status labels are valid only as complete UI segments. Ordinary
+    // prose such as "the planner is thinking about rate limits" must not match.
     const statusSegments = text.split(/\s+\|\s+/).map(part => part.trim()).filter(Boolean);
     if (statusSegments.some(part => /^(?:thinking|generating|working)(?:\s*[.…]{1,3})?$/i.test(part))) {
       return { kind: "stalled", message: text.slice(0, 500) };
     }
 
+    const candidate = text.replace(/^(?:error|warning|notice)\s*[:–—-]\s*/i, "").trim();
     const rules = [
       {
         kind: "account_restriction",
-        // Documented OpenAI UI/help wording includes “We detect suspicious activity.”,
-        // “Unusual Activity Detected”, “Unusual activity has been detected from
-        // your device. Try again later”, and “Sorry, you have been blocked”.
-        // Older model-specific restrictions also use “temporarily restricted your
-        // access ... as we review for potential abuse”.
-        pattern: /we detect suspicious activity|unusual activity detected|unusual activity has been detected from your device|sorry,? you have been blocked|temporarily restricted your access(?: to .+)? as we review for potential abuse|temporary(?:ly)? restrict(?:ed|ion)|account.*restricted|access.*suspended|abuse[- ]prevention/i
+        strict: /^(?:we detect suspicious activity(?: on your account)?\.?|unusual activity detected\.?|unusual activity has been detected from your device\.?\s*try again later\.?|sorry,? you have been blocked\.?|we(?:'ve| have) temporarily restricted your access(?: to [^.]+)? as we review for potential abuse\.?)$/i,
+        notice: /^(?:we detect suspicious activity|unusual activity detected|unusual activity has been detected from your device|sorry,? you have been blocked|we(?:'ve| have) temporarily restricted your access(?: to .+)? as we review for potential abuse)(?:[.!]|\s|$)/i
       },
       {
         kind: "rate_limit",
-        pattern: /rate limit|too many requests|reached (?:your|the).*limit|usage limit|limit resets|try again (?:in|after|later)|available again at|allowance.*reset/i
+        strict: /^(?:too many requests\.?|rate limit (?:reached|exceeded)\.?|you(?:'ve| have) reached (?:your|the) .{0,120}(?:usage|message|request|rate|gpt[^ ]*)?\s*limit\.?|you have reached your usage limit\.?|please try again (?:in|after) \d+[^.]*\.?|your .{0,100} limit resets .+)$/i,
+        notice: /^(?:too many requests|rate limit (?:reached|exceeded)|you(?:'ve| have) reached (?:your|the) .{0,120}(?:usage|message|request|rate|gpt[^ ]*)?\s*limit|you have reached your usage limit|please try again (?:in|after) \d+|your .{0,100} limit resets)(?:[.!]|\s|$)/i
       },
       {
         kind: "context_limit",
-        pattern: /conversation (?:is )?too long|maximum (?:conversation|context|length)|context (?:window )?(?:is )?full|start a new chat to continue/i
+        strict: /^(?:this )?conversation (?:is )?too long\.?|^(?:the )?maximum (?:conversation|context) length (?:has been )?reached\.?|^the context window is full\.?|^start a new chat to continue\.?/i,
+        notice: /^(?:(?:this )?conversation (?:is )?too long|(?:the )?maximum (?:conversation|context) length (?:has been )?reached|the context window is full|start a new chat to continue)(?:[.!]|\s|$)/i
       },
       {
         kind: "content_removed",
-        pattern: /content (?:was|has been) (?:removed|deleted)|response (?:was|has been) removed/i
+        strict: /^(?:this )?(?:content|response) (?:was|has been) (?:removed|deleted)\.?$/i,
+        notice: /^(?:this )?(?:content|response) (?:was|has been) (?:removed|deleted)(?:[.!]|\s|$)/i
       },
       {
         kind: "safety_restriction",
-        pattern: /your request was flagged as potentially violating our usage policy|this content may violate our terms of use or usage policies|request (?:was )?blocked|blocked for safety|violat(?:es|ion).*policy|policy restriction|cannot comply due to safety|can't comply due to safety/i
+        strict: /^(?:your request was flagged as potentially violating our usage policy|this content may violate our terms of use or usage policies|your request was blocked|request blocked for safety|i cannot comply due to safety|i can't comply due to safety)\.?$/i,
+        notice: /^(?:your request was flagged as potentially violating our usage policy|this content may violate our terms of use or usage policies|your request was blocked|request blocked for safety)(?:[.!]|\s|$)/i
       }
     ];
 
     for (const rule of rules) {
-      if (rule.pattern.test(text)) return { kind: rule.kind, message: text.slice(0, 500) };
+      const pattern = source === "assistant" ? rule.strict : rule.notice;
+      if (pattern.test(candidate)) return { kind: rule.kind, message: text.slice(0, 500) };
     }
     return null;
   }
@@ -298,7 +300,7 @@
   function enabledSendButton() {
     const button = firstVisible(SELECTORS.send);
     if (!button || button.disabled || button.getAttribute("aria-disabled") === "true") return null;
-    return button;
+    return  button;
   }
 
   function conversationInfo(value = location.href) {
@@ -368,23 +370,33 @@
     ].filter(Boolean).join("\n");
   }
 
-  function liveNoticeText() {
+  function liveNoticeTexts() {
     const parts = [];
+    const conversationSelector = [
+      '[data-message-author-role]', '[data-turn="assistant"]', '[data-turn="user"]',
+      'article', '[data-testid^="conversation-turn-"]'
+    ].join(', ');
     for (const selector of SELECTORS.notices) {
       let nodes = [];
       try { nodes = document.querySelectorAll(selector); } catch { nodes = []; }
       for (const node of nodes) {
         if (!isVisible(node)) continue;
+        // Ignore live regions owned by chat turns, the composer, or containers
+        // that wrap the conversation. These commonly contain user/assistant prose.
+        if (node.closest?.(conversationSelector) || node.closest?.('form')) continue;
+        if (node.querySelector?.(conversationSelector) || node.querySelector?.('#prompt-textarea, form')) continue;
         const text = normalizeText(node.innerText || node.textContent || "");
-        if (text && !parts.includes(text)) parts.push(text);
+        if (text && text.length <= 2000 && !parts.includes(text)) parts.push(text);
       }
     }
-    return parts.join(" | ").slice(-6000);
+    return parts;
   }
 
   function detectInterruption(settings, baseline = null) {
-    const notice = matureGuardrail(classifyGuardrailText(liveNoticeText()), settings);
-    if (notice) return notice;
+    for (const text of liveNoticeTexts()) {
+      const notice = matureGuardrail(classifyGuardrailText(text, "notice"), settings);
+      if (notice) return notice;
+    }
 
     if (baseline && !isGenerating()) {
       const current = assistantSnapshot();
@@ -452,7 +464,7 @@
       if (snapshot.count === 0 || generating || !stable) return null;
       if (requireChange && !changed) return null;
 
-      const responseGuardrail = classifyGuardrailText(snapshot.text);
+      const responseGuardrail = classifyGuardrailText(snapshot.text, "assistant");
       if (responseGuardrail) {
         const mature = matureGuardrail(responseGuardrail, settings);
         if (mature) throw new JobInterruption(mature.kind, mature.message);
@@ -523,6 +535,22 @@
     ].filter(Boolean).join("\n");
   }
 
+  function buildInitializationPrompt(settings) {
+    return [
+      "Initialize durable repository continuity for this chat. Do not continue unrelated implementation work in this response.",
+      `Repository: ${settings.repository}`,
+      `Continuity file: ${settings.handoffFile}`,
+      settings.pluginInstruction,
+      "Read the current conversation goal and inspect the repository before editing files.",
+      "Create the continuity file if it does not exist. If it already exists, reconcile and improve it instead of discarding valid state.",
+      "Record: original goal, current branch and commit, completed work, changed files, decisions, tests, blockers, unfinished work, and a prioritized next-task checklist.",
+      "Commit and push the continuity file and any already-completed reviewable work. Never commit secrets or private transcript content.",
+      "Verify the commit exists remotely before claiming success.",
+      `End with exactly one machine-readable line: ${CHECKPOINT_PREFIX} <commit-sha-or-immutable-ref>`,
+      "If no action-capable repository tool is available or the commit cannot be verified, end with: AUTOPROMPTER_CHECKPOINT_FAILED: <reason>"
+    ].filter(Boolean).join("\n");
+  }
+
   function buildHandoffPrompt(settings, reason, metrics) {
     return [
       "Prepare this project for continuation in a new chat. Do not begin new implementation work.",
@@ -540,7 +568,7 @@
 
   async function submitPrompt({
     prompt,
-    signal,
+     signal,
     status,
     settings,
     baseline,
@@ -645,6 +673,38 @@
       let baseline = await waitForCompletedAssistant({ signal, settings: message.settings, status });
       let metrics = contextMetrics(message.settings);
       await status(`Context estimate ${metrics.percent.toFixed(1)}%`, metrics);
+
+      if (message.mode === "initialize") {
+        if (!message.settings.continuityEnabled || !message.settings.repository) {
+          throw new Error("Continuity initialization requires a valid repository for this chat.");
+        }
+        await status("Initializing continuity file", metrics);
+        const initialized = await submitPrompt({
+          prompt: buildInitializationPrompt(message.settings),
+          signal,
+          status,
+          settings: message.settings,
+          baseline,
+          expectedConversationId: message.chat.id
+        });
+        if (/AUTOPROMPTER_CHECKPOINT_FAILED:/i.test(initialized.text)) {
+          throw new Error("Continuity initialization failed; the repository was not verified.");
+        }
+        checkpoint = extractCheckpointMarker(initialized.text);
+        if (!checkpoint) throw new Error("Initialization response did not include a verified checkpoint marker.");
+        metrics = contextMetrics(message.settings);
+        await runtimeMessage({
+          type: "JOB_DONE",
+          token: message.token,
+          jobId: message.jobId,
+          assistantSignature: initialized.signature,
+          checkpoint,
+          initialized: true,
+          contextEstimateTokens: metrics.estimatedTokens,
+          contextPercent: metrics.percent
+        });
+        return;
+      }
 
       if (shouldRolloverContext(
         metrics.estimatedTokens,
@@ -848,7 +908,7 @@
         type: "JOB_ERROR",
         token: message.token,
         jobId: message.jobId,
-        error: error?.message || String(error)
+         error: error?.message || String(error)
       });
     }
   }
@@ -904,6 +964,7 @@
       classifyGuardrailText,
       matureGuardrail,
       buildDurableWorkPrompt,
+      buildInitializationPrompt,
       extractCheckpointMarker,
       extractHandoffMarker
     };

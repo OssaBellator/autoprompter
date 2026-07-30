@@ -5,6 +5,7 @@ const SESSION_KEY = "autoprompterScheduler";
 const SETTINGS_KEY = "autoprompterSettings";
 const CATALOG_KEY = "autoprompterChatCatalog";
 const SELECTION_KEY = "autoprompterSelectedChatIds";
+const CHAT_CONFIGS_KEY = "autoprompterChatConfigs";
 const NEW_CHAT_URL = "https://chatgpt.com/";
 const NOTIFICATION_ICON_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABPUlEQVR4nO2ZMQ7CQAwEF0QPL4UO3kDJT/kBVCehFChxfDeWbqfPaT34HKMczvfrRxNzpAPQWAAdgMYC6AA0FkAHoLEAOgCNBdABaCyADkBzyjjk/XxlHBPi8rjtev6w5+8wWfiSqIjwFahUvBTPExJQrfhGJNf0Q3CzgKq/fmNrPncAHYDGAugANCmb4JK929k/sodwegf0LL7H+dNfAQvIPrD3opR9fpchWH1b/MVXgA5AM72AsovQqDlSdhHqvVA1pr8CFpB9YNbdHTUDvAjRAWgsYOsDo15PUbbmcwdEHqraBZFc4Q6oJiGaZ9fX4ca0n8fXsFYO1VElhiB5nXAB9CxBBdDFS6CACsVLkIAqxUuAgErFS4MFVCteGiigYvHSIAFVi5cGbILVwRchGgugA9BYAB2AxgLoADRfdOpG+jsXCCIAAAAASUVORK5CYII=";
 
@@ -122,7 +123,7 @@ function isNewChatUrl(value) {
   }
 }
 
-function normalizeChat(chat) {
+function normalizeChat(chat, baseSettings = DEFAULTS) {
   const normalized = normalizeConversationUrl(chat?.url || "");
   if (!normalized) return null;
   const suppliedId = String(chat?.id || normalized.id);
@@ -141,7 +142,8 @@ function normalizeChat(chat) {
     rolloverCount: 0,
     lastCheckpoint: "",
     contextEstimateTokens: 0,
-    contextPercent: 0
+    contextPercent: 0,
+    settings: normalizeSettings({ ...baseSettings, ...(chat?.settings || {}) })
   };
 }
 
@@ -150,7 +152,8 @@ function nextEligibleIndex(chats, currentIndex, maxContinuations) {
   for (let offset = 1; offset <= chats.length; offset += 1) {
     const index = (currentIndex + offset + chats.length) % chats.length;
     const chat = chats[index];
-    if (!chat.failed && !chat.retired && Number(chat.sentCount || 0) < maxContinuations) return index;
+    const limit = Number(chat.settings?.maxContinuations || maxContinuations);
+    if (!chat.failed && !chat.retired && Number(chat.sentCount || 0) < limit) return index;
   }
   return -1;
 }
@@ -192,6 +195,7 @@ function publicState(state) {
     currentIndex: Number.isInteger(state.currentIndex) ? state.currentIndex : -1,
     chats: Array.isArray(state.chats) ? state.chats : [],
     settings: normalizeSettings(state.settings),
+    mode: state.mode || "work",
     startedAt: state.startedAt || null,
     pendingSuccessor: state.pendingSuccessor || null,
     handoffHistory: Array.isArray(state.handoffHistory) ? state.handoffHistory : [],
@@ -281,16 +285,21 @@ async function stopScheduler(reason = "Stopped", error = "", closeWorker = true,
   return publicState(stopped);
 }
 
-async function saveSuccessorToCatalog(chat) {
-  const stored = await chrome.storage.local.get([CATALOG_KEY, SELECTION_KEY]);
+async function saveSuccessorToCatalog(chat, parentId = "") {
+  const stored = await chrome.storage.local.get([CATALOG_KEY, SELECTION_KEY, CHAT_CONFIGS_KEY]);
   const catalog = Array.isArray(stored[CATALOG_KEY]) ? stored[CATALOG_KEY] : [];
   const byId = new Map(catalog.map(item => [item.id, item]));
   byId.set(chat.id, { id: chat.id, title: chat.title, url: chat.url });
   const selected = new Set(Array.isArray(stored[SELECTION_KEY]) ? stored[SELECTION_KEY] : []);
   selected.add(chat.id);
+  const configs = stored[CHAT_CONFIGS_KEY] && typeof stored[CHAT_CONFIGS_KEY] === "object"
+    ? { ...stored[CHAT_CONFIGS_KEY] }
+    : {};
+  if (parentId && configs[parentId] && !configs[chat.id]) configs[chat.id] = { ...configs[parentId] };
   await chrome.storage.local.set({
     [CATALOG_KEY]: [...byId.values()].sort((left, right) => left.title.localeCompare(right.title)),
-    [SELECTION_KEY]: [...selected]
+    [SELECTION_KEY]: [...selected],
+    [CHAT_CONFIGS_KEY]: configs
   });
 }
 
@@ -313,7 +322,7 @@ async function sendCurrentJob(state) {
         token: state.token,
         jobId: state.currentJobId,
         parentChat: state.pendingSuccessor.parentChat,
-        settings: state.settings,
+        settings: state.pendingSuccessor.settings || state.settings,
         prompt: state.pendingSuccessor.prompt,
         checkpoint: state.pendingSuccessor.checkpoint,
         reason: state.pendingSuccessor.reason
@@ -335,7 +344,8 @@ async function sendCurrentJob(state) {
       token: state.token,
       jobId: state.currentJobId,
       chat: { ...chat },
-      settings: state.settings
+      settings: chat.settings || state.settings,
+      mode: state.mode || "work"
     });
   } catch {
     // The content script will announce readiness after navigation settles.
@@ -362,7 +372,7 @@ async function advanceScheduler(state) {
     state.pendingSuccessor = null;
     state.chats = state.chats.map(chat => ({
       ...chat,
-      status: chat.failed ? "Error" : (chat.retired ? chat.status : "Finished")
+      status: chat.failed ? "Error" : (chat.retired ? chat.status : (state.mode === "initialize" ? "Initialized" : "Finished"))
     }));
     await saveState(state);
     await removeManagedTab(workerTabId);
@@ -422,21 +432,30 @@ async function advanceScheduler(state) {
   return publicState(state);
 }
 
-async function startScheduler(chats, settings) {
+async function startScheduler(chats, settings, mode = "work") {
   const normalizedSettings = normalizeSettings(settings);
-  if (settings?.continuityEnabled && !normalizedSettings.repository) {
-    throw new Error("Repository continuity requires a valid GitHub owner/repository value.");
-  }
 
   const normalizedChats = [];
   const seen = new Set();
   for (const chat of Array.isArray(chats) ? chats : []) {
-    const normalized = normalizeChat(chat);
+    const normalized = normalizeChat(chat, normalizedSettings);
     if (!normalized || seen.has(normalized.id)) continue;
+    if (chat?.settings?.continuityEnabled && !normalized.settings.repository) {
+      throw new Error(`Repository continuity requires a valid GitHub owner/repository value for ${normalized.title}.`);
+    }
     seen.add(normalized.id);
     normalizedChats.push(normalized);
   }
   if (normalizedChats.length === 0) throw new Error("Select at least one ChatGPT conversation.");
+  const normalizedMode = mode === "initialize" ? "initialize" : "work";
+  if (normalizedMode === "initialize") {
+    for (const chat of normalizedChats) {
+      if (!chat.settings.continuityEnabled || !chat.settings.repository) {
+        throw new Error(`Continuity initialization requires a valid repository for ${chat.title}.`);
+      }
+      chat.settings.maxContinuations = 1;
+    }
+  }
 
   const previous = await loadState();
   if (previous?.running) await stopScheduler("Restarted", "", true);
@@ -452,6 +471,7 @@ async function startScheduler(chats, settings) {
     lastError: "",
     pausedReason: "",
     settings: normalizedSettings,
+    mode: normalizedMode,
     chats: normalizedChats,
     handoffHistory: [],
     startedAt: Date.now()
@@ -484,7 +504,8 @@ async function finishJob(message, sender) {
   const chat = state.chats[state.currentIndex];
   if (!chat) return publicState(state);
   chat.sentCount = Number(chat.sentCount || 0) + 1;
-  chat.status = chat.sentCount >= state.settings.maxContinuations ? "Finished" : "Queued";
+  const chatLimit = Number(chat.settings?.maxContinuations || state.settings.maxContinuations);
+  chat.status = message.initialized ? "Initialized" : (chat.sentCount >= chatLimit ? "Finished" : "Queued");
   chat.lastError = "";
   if (message.checkpoint) chat.lastCheckpoint = String(message.checkpoint).slice(0, 200);
   if (Number.isFinite(message.contextEstimateTokens)) chat.contextEstimateTokens = Math.round(message.contextEstimateTokens);
@@ -495,8 +516,8 @@ async function finishJob(message, sender) {
   if (state.settings.notifyOnPromptDone) {
     await notify(
       state,
-      `Prompt completed: ${chat.title}`,
-      `${chat.sentCount}/${state.settings.maxContinuations}${chat.lastCheckpoint ? ` · checkpoint ${chat.lastCheckpoint}` : ""}`,
+      message.initialized ? `Continuity initialized: ${chat.title}` : `Prompt completed: ${chat.title}`,
+      `${chat.sentCount}/${Number(chat.settings?.maxContinuations || state.settings.maxContinuations)}${chat.lastCheckpoint ? ` · checkpoint ${chat.lastCheckpoint}` : ""}`,
       `prompt-${chat.id}`
     );
   }
@@ -521,10 +542,11 @@ async function failJob(message, sender) {
 }
 
 async function beginSuccessor(state, chat, message) {
+  const chatSettings = chat.settings || state.settings;
   const checkpoint = String(message.checkpoint || chat.lastCheckpoint || "").slice(0, 200);
   const reason = String(message.reason || message.message || "Continuity rollover requested.").slice(0, 500);
   const rolloverCount = Number(chat.rolloverCount || 0) + 1;
-  if (!state.settings.continuityEnabled || !state.settings.repository) {
+  if (!chatSettings.continuityEnabled || !chatSettings.repository) {
     return stopScheduler("Continuity handoff required", reason, true, true);
   }
   if (!checkpoint) {
@@ -535,10 +557,10 @@ async function beginSuccessor(state, chat, message) {
       true
     );
   }
-  if (rolloverCount > state.settings.maxRollovers) {
+  if (rolloverCount > chatSettings.maxRollovers) {
     return stopScheduler(
       "Rollover limit reached",
-      `The chat reached the configured limit of ${state.settings.maxRollovers} successor chats.`,
+      `The chat reached the configured limit of ${chatSettings.maxRollovers} successor chats.`,
       true,
       true
     );
@@ -552,7 +574,8 @@ async function beginSuccessor(state, chat, message) {
     parentChat: { ...chat },
     checkpoint,
     reason,
-    prompt: buildSuccessorPrompt(state.settings, chat, checkpoint, reason)
+    prompt: buildSuccessorPrompt(chatSettings, chat, checkpoint, reason),
+    settings: chatSettings
   };
   state.status = `Creating successor for ${chat.title}`;
   await saveState(state);
@@ -609,7 +632,7 @@ async function successorCreated(message, sender) {
 
   const info = normalizeConversationUrl(message.conversation?.url || "");
   if (!info || info.id !== message.conversation?.id) {
-    return stopScheduler("Successor creation failed", "The new ChatGPT conversation URL could not be verified.", true, true);
+     return stopScheduler("Successor creation failed", "The new ChatGPT conversation URL could not be verified.", true, true);
   }
 
   const parent = state.pendingSuccessor.parentChat;
@@ -644,7 +667,7 @@ async function successorCreated(message, sender) {
   state.currentJobId = null;
   state.status = `Successor created for ${parent.title}`;
   await saveState(state);
-  await saveSuccessorToCatalog(successor);
+  await saveSuccessorToCatalog(successor, parent.id);
   await notify(state, "Successor chat ready", `${successor.title} · checkpoint ${successor.lastCheckpoint}`, `successor-${successor.id}`);
   return advanceScheduler(state);
 }
@@ -657,7 +680,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "GET_SCHEDULER_STATE":
         return publicState(await loadState());
       case "START_SCHEDULER":
-        return startScheduler(message.chats, message.settings);
+        return startScheduler(message.chats, message.settings, message.mode);
       case "STOP_SCHEDULER":
         return stopScheduler("Stopped by user", "", true);
       case "CONTENT_READY": {
