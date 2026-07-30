@@ -1,5 +1,7 @@
 # AutoPrompter for ChatGPT
 
+Current release: **2.2.0**
+
 AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that cycles through selected ChatGPT conversations using one inactive managed tab. It can notify you when work prompts complete and, when explicitly configured, create successor chats from verified Git repository checkpoints.
 
 ## Features
@@ -34,6 +36,16 @@ AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that cycles th
 6. Press **Start selected**.
 
 The sidebar is virtualized, so the extension can discover only links present in the current page DOM. Repeatedly scroll and refresh to expand the saved local catalog.
+
+## Per-chat settings and continuity initialization
+
+Each selected conversation can override the global follow-up prompt, GitHub repository, continuity file, plugin/tool instruction, and whether continuity is enabled. Open **Per-chat prompt and repository overrides**, choose a selected chat, and save only the fields that differ. Blank fields inherit the global settings.
+
+Use **Initialize continuity** to send one purpose-built initialization prompt to every selected chat. Each chat uses its effective repository settings, creates or reconciles the continuity file, commits and pushes it through the configured action-capable tool, and must return an `AUTOPROMPTER_CHECKPOINT` marker. Initialization does not run the normal repeated work prompt.
+
+## Circuit-breaker matching
+
+Restriction detection is intentionally exact and UI-scoped. Normal assistant prose that merely discusses rate limits, account restrictions, or safety controls does not activate the circuit breaker. Actual trusted notice containers and short assistant/system messages matching documented restriction wording still stop the scheduler.
 
 ## Notifications
 
