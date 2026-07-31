@@ -18,7 +18,7 @@ function clone(value) {
 
 global.chrome = {
   runtime: {
-    getManifest: () => ({ version: "2.7.0" }),
+    getManifest: () => ({ version: "2.8.0" }),
     onMessage: { addListener(listener) { runtimeListener = listener; } }
   },
   storage: {
@@ -113,15 +113,22 @@ test("selected chats run concurrently and the fastest chat advances independentl
   assert.equal(new Set(started.workerTabIds).size, 3);
   assert.ok(started.chats.every(chat => chat.currentJobId && chat.status === "Loading"));
 
-  for (const chat of started.chats) {
+  for (const chat of started.chats.slice(0, 2)) {
     await dispatch(
       { scope: "AUTOPROMPTER_RUNTIME", type: "CONTENT_READY" },
       { tab: { id: chat.workerTabId } }
     );
+    assert.equal(sentMessages.filter(item => item.message.type === "RUN_CHAT_JOB").length, 0);
   }
+  await dispatch(
+    { scope: "AUTOPROMPTER_RUNTIME", type: "CONTENT_READY" },
+    { tab: { id: started.chats[2].workerTabId } }
+  );
   const firstJobs = sentMessages.filter(item => item.message.type === "RUN_CHAT_JOB");
   assert.equal(firstJobs.length, 3);
   assert.deepEqual(new Set(firstJobs.map(item => item.tabId)), new Set(started.workerTabIds));
+  assert.ok(firstJobs.every(item => item.message.initialBatch === true));
+  assert.ok(firstJobs.every(item => item.message.settings.delaySeconds === 0));
 
   const before = clone(sessionStore.autoprompterScheduler);
   const fastest = before.chats[1];
@@ -171,6 +178,8 @@ test("a selected legacy chat can start directly in a new conversation", async ()
   assert.match(job.message.prompt, /cannot access the previous chat transcript/i);
   assert.match(job.message.prompt, /Continue the legacy goal/);
   assert.equal(job.message.settings.checkpointAfterPrompt, false);
+  assert.equal(job.message.settings.delaySeconds, 0);
+  assert.equal(job.message.initialBatch, true);
 });
 
 test("an unverified context-limit interruption opens a best-effort successor", async () => {
@@ -271,4 +280,48 @@ test("connection interruption queues a continue retry without consuming progress
   assert.match(retryJob.message.settings.prompt, /response was interrupted/i);
   assert.equal(retryJob.message.settings.checkpointBeforePrompt, false);
   assert.equal(retryJob.message.settings.checkpointAfterPrompt, false);
+});
+
+test("initial batch grace releases ready chats and late workers still use zero delay", async () => {
+  resetHarness();
+  const chats = ["one", "two", "three"].map(id => ({
+    id,
+    title: id,
+    url: `https://chatgpt.com/c/${id}`,
+    settings: { prompt: `continue ${id}`, maxContinuations: 1 }
+  }));
+
+  const started = await dispatch({
+    scope: "AUTOPROMPTER_RUNTIME",
+    type: "START_SCHEDULER",
+    chats,
+    settings: { delaySeconds: 15, maxContinuations: 1 },
+    mode: "work"
+  });
+  sessionStore.autoprompterScheduler.initialBatchDeadline = 0;
+
+  await dispatch(
+    { scope: "AUTOPROMPTER_RUNTIME", type: "CONTENT_READY" },
+    { tab: { id: started.chats[0].workerTabId } }
+  );
+  let jobs = sentMessages.filter(item => item.message.type === "RUN_CHAT_JOB");
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].message.settings.delaySeconds, 0);
+
+  await dispatch(
+    { scope: "AUTOPROMPTER_RUNTIME", type: "CONTENT_READY" },
+    { tab: { id: started.chats[0].workerTabId } }
+  );
+  jobs = sentMessages.filter(item => item.message.type === "RUN_CHAT_JOB");
+  assert.equal(jobs.length, 1, "duplicate readiness must not duplicate the first job");
+
+  for (const chat of started.chats.slice(1)) {
+    await dispatch(
+      { scope: "AUTOPROMPTER_RUNTIME", type: "CONTENT_READY" },
+      { tab: { id: chat.workerTabId } }
+    );
+  }
+  jobs = sentMessages.filter(item => item.message.type === "RUN_CHAT_JOB");
+  assert.equal(jobs.length, 3);
+  assert.ok(jobs.every(item => item.message.settings.delaySeconds === 0));
 });

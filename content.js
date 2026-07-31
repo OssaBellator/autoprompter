@@ -621,6 +621,27 @@
     element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
   }
 
+  function submissionObserved(target, beforeUsers) {
+    return userCount() > beforeUsers || isGenerating() || composerText(target) === "";
+  }
+
+  function submitWithFallback(target) {
+    const form = target.closest?.("form");
+    if (form && typeof form.requestSubmit === "function") {
+      form.requestSubmit();
+      return "form";
+    }
+    for (const type of ["keydown", "keypress", "keyup"]) {
+      target.dispatchEvent(new KeyboardEvent(type, {
+        key: "Enter",
+        code: "Enter",
+        bubbles: true,
+        cancelable: true
+      }));
+    }
+    return "keyboard";
+  }
+
   function buildCheckpointPrompt(settings, phase) {
     return [
       `Repository continuity checkpoint (${phase}). Do not start new project work in this response.`,
@@ -676,8 +697,11 @@
     delaySeconds = settings.delaySeconds
   }) {
     let target = await waitForEmptyComposer(signal, status, settings, baseline);
-    await status(`Delaying ${delaySeconds}s`);
-    await sleep(delaySeconds * 1000, signal);
+    const delayMs = Math.max(0, Number(delaySeconds || 0) * 1000);
+    if (delayMs > 0) {
+      await status(`Delaying ${Number(delaySeconds)}s`);
+      await sleep(delayMs, signal);
+    }
 
     const currentAfterDelay = conversationInfo();
     if (!allowConversationChange && expectedConversationId && currentAfterDelay?.id !== expectedConversationId) {
@@ -694,25 +718,35 @@
 
     try {
       await status("Preparing prompt");
-      const button = await waitUntil(() => {
+      const validateOwnership = () => {
         if (!target.isConnected) throw new Error("The composer was replaced before submission.");
         if (target.getAttribute(OWNERSHIP_ATTR) !== owner || composerText(target) !== normalizeText(prompt)) {
           throw new Error("The prompt was edited before submission; it was not sent.");
         }
-        return enabledSendButton();
-      }, {
-        timeoutMs: 8000,
-        signal,
-        checkInterruption: () => detectInterruption(settings, baseline)
-      });
+      };
 
       const beforeUsers = userCount();
-      button.click();
+      try {
+        const button = await waitUntil(() => {
+          validateOwnership();
+          return enabledSendButton();
+        }, {
+          timeoutMs: 3000,
+          signal,
+          checkInterruption: () => detectInterruption(settings, baseline)
+        });
+        button.click();
+      } catch (error) {
+        if (error?.name === "AbortError" || error instanceof JobInterruption || !/Timed out waiting for ChatGPT/.test(error?.message || "")) {
+          throw error;
+        }
+        validateOwnership();
+        const method = submitWithFallback(target);
+        await status(`Submitting prompt with ${method} fallback`);
+      }
+
       await status("Submitting prompt");
-      await waitUntil(() => {
-        const sent = userCount() > beforeUsers || isGenerating() || composerText(target) === "";
-        return sent ? true : null;
-      }, {
+      await waitUntil(() => submissionObserved(target, beforeUsers) ? true : null, {
         timeoutMs: 10000,
         signal,
         checkInterruption: () => detectInterruption(settings, baseline)
@@ -1085,7 +1119,9 @@
       buildInitializationPrompt,
       extractCheckpointMarker,
       extractHandoffMarker,
-      getChatCatalog
+      getChatCatalog,
+      submissionObserved,
+      submitWithFallback
     };
   }
 })();

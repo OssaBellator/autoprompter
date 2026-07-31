@@ -6,7 +6,7 @@ const assert = require("node:assert/strict");
 global.chrome = {
   runtime: {
     onMessage: { addListener() {} },
-    getManifest: () => ({ version: "2.7.0" }),
+    getManifest: () => ({ version: "2.8.0" }),
     getURL: value => `chrome-extension://test/${value}`
   },
   action: {},
@@ -28,7 +28,8 @@ const {
   isChatEligible,
   MAX_CONCURRENT_CHATS,
   buildSuccessorPrompt,
-  buildFreshStartPrompt
+  buildFreshStartPrompt,
+  INITIAL_BATCH_GRACE_MS
 } = require("../background.js");
 
 test("normalizes settings and clamps limits", () => {
@@ -83,6 +84,10 @@ test("normalizes chat metadata with continuity state", () => {
   assert.equal(chat.lastCheckpoint, "");
   assert.equal(chat.startInNewChat, false);
   assert.equal(normalizeChat({ id: "fresh", url: "https://chatgpt.com/c/fresh", startInNewChat: true }).startInNewChat, true);
+  assert.equal(chat.contentReady, false);
+  assert.equal(chat.jobDispatched, false);
+  assert.equal(chat.initialJobPending, false);
+  assert.equal(INITIAL_BATCH_GRACE_MS, 5000);
 });
 
 test("legacy eligibility helper still skips completed chats", () => {

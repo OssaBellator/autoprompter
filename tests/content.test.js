@@ -28,7 +28,9 @@ const {
   buildInitializationPrompt,
   extractCheckpointMarker,
   extractHandoffMarker,
-  getChatCatalog
+  getChatCatalog,
+  submissionObserved,
+  submitWithFallback
 } = require("../content.js");
 
 test("conversation IDs are extracted from chat routes", () => {
@@ -187,4 +189,30 @@ test("current maximum-length wording triggers context rollover", () => {
     classifyGuardrailText("The documentation quotes a maximum-length warning for testing.", "assistant"),
     null
   );
+});
+
+
+test("prompt submission includes form and keyboard fallbacks", () => {
+  let formSubmits = 0;
+  const formTarget = {
+    closest: () => ({ requestSubmit() { formSubmits += 1; } })
+  };
+  assert.equal(submitWithFallback(formTarget), "form");
+  assert.equal(formSubmits, 1);
+
+  const events = [];
+  const OriginalKeyboardEvent = global.KeyboardEvent;
+  global.KeyboardEvent = class KeyboardEvent {
+    constructor(type, options) { this.type = type; this.options = options; }
+  };
+  const keyboardTarget = {
+    closest: () => null,
+    dispatchEvent(event) { events.push(event); }
+  };
+  assert.equal(submitWithFallback(keyboardTarget), "keyboard");
+  assert.deepEqual(events.map(event => event.type), ["keydown", "keypress", "keyup"]);
+  global.KeyboardEvent = OriginalKeyboardEvent;
+
+  const source = require("node:fs").readFileSync(require.resolve("../content.js"), "utf8");
+  assert.match(source, /timeoutMs: 3000/);
 });
