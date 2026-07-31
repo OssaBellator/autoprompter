@@ -86,7 +86,7 @@ jobs:
           replace_once(
               'tests/concurrent-scheduler.test.js',
               'message: "This conversation is too long."',
-              'message: "You\\'ve reached the maximum length for this conversation, but you can keep talking by starting a new chat."'
+              "message: \"You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.\""
           )
 
           for path in ['manifest.json', 'package.json', 'README.md', 'tests/background.test.js', 'tests/concurrent-scheduler.test.js']:
