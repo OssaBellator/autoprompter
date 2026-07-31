@@ -6,7 +6,7 @@ const assert = require("node:assert/strict");
 global.chrome = {
   runtime: {
     onMessage: { addListener() {} },
-    getManifest: () => ({ version: "2.4.0" }),
+    getManifest: () => ({ version: "2.5.0" }),
     getURL: value => `chrome-extension://test/${value}`
   },
   action: {},
@@ -27,7 +27,8 @@ const {
   eligibleChatIndexes,
   isChatEligible,
   MAX_CONCURRENT_CHATS,
-  buildSuccessorPrompt
+  buildSuccessorPrompt,
+  buildFreshStartPrompt
 } = require("../background.js");
 
 test("normalizes settings and clamps limits", () => {
@@ -80,6 +81,8 @@ test("normalizes chat metadata with continuity state", () => {
   assert.equal(chat.generation, 0);
   assert.equal(chat.retired, false);
   assert.equal(chat.lastCheckpoint, "");
+  assert.equal(chat.startInNewChat, false);
+  assert.equal(normalizeChat({ id: "fresh", url: "https://chatgpt.com/c/fresh", startInNewChat: true }).startInNewChat, true);
 });
 
 test("legacy eligibility helper still skips completed chats", () => {
@@ -140,4 +143,17 @@ test("concurrent scheduler selects every eligible chat at once", () => {
   assert.equal(isChatEligible({ settings: { maxContinuations: 2 } }, chats[0]), true);
   assert.equal(isChatEligible({ settings: { maxContinuations: 2 } }, chats[2]), false);
   assert.equal(MAX_CONCURRENT_CHATS, 12);
+});
+
+
+test("fresh-start prompt is explicit about missing legacy context", () => {
+  const prompt = buildFreshStartPrompt(
+    normalizeSettings({ prompt: "Continue the unfinished implementation", repository: "owner/repo", continuityEnabled: true }),
+    { title: "Legacy project" },
+    "The previous chat reached its context limit"
+  );
+  assert.match(prompt, /cannot access the previous chat transcript/i);
+  assert.match(prompt, /Repository: owner\/repo/);
+  assert.match(prompt, /Continue the unfinished implementation/);
+  assert.match(prompt, /create the continuity file/i);
 });

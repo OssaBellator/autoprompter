@@ -1,8 +1,8 @@
 {
   "name": "autoprompter",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "private": true,
-  "description": "Edge extension for concurrent guarded multi-chat ChatGPT continuation and repository-backed handoffs.",
+  "description": "Edge extension for concurrent multi-chat ChatGPT continuation with fresh-start recovery and repository-backed handoffs.",
   "scripts": {
     "test": "node --test",
     "check": "node --check background.js && node --check content.js && node --check popup.js"

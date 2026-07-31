@@ -99,7 +99,7 @@
           <span>Checkpoint after completed work</span>
         </label>
 
-        <p class="warning">Context usage is estimated from visible text. Automatic rollover requires a verified checkpoint marker from an action-capable repository tool. Rate limits, account restrictions, and safety blocks stop the scheduler instead of opening another chat.</p>
+        <p class="warning">Context usage is estimated from visible text. Verified repository handoffs are preferred; if an actual context-limit message arrives before a checkpoint can be made, AutoPrompter opens a best-effort fresh chat using the configured prompt and repository details. Rate limits, account restrictions, and safety blocks still stop the scheduler when the circuit breaker is enabled.</p>
       </div>
     </details>
 
@@ -111,15 +111,16 @@
         </div>
         <button id="refresh" class="compact" type="button">Refresh</button>
       </div>
-      <input id="filter" class="filter" type="search" placeholder="Filter chats" aria-label="Filter chats">
-      <div class="bulk-actions">
-        <button id="selectAll" class="link-button" type="button">Select visible</button>
-        <button id="selectNone" class="link-button" type="button">Clear selection</button>
-      </div>
-      <div id="chatList" class="chat-list" role="listbox" aria-label="ChatGPT conversations"></div>
-      <p id="catalogHint" class="hint">Open ChatGPT and press Refresh. The extension reads conversation links currently present in the sidebar.</p>
+      <div id="selectionControls">
+        <input id="filter" class="filter" type="search" placeholder="Filter chats" aria-label="Filter chats">
+        <div class="bulk-actions">
+          <button id="selectAll" class="link-button" type="button">Select visible</button>
+          <button id="selectNone" class="link-button" type="button">Clear selection</button>
+        </div>
+        <div id="chatList" class="chat-list" role="listbox" aria-label="ChatGPT conversations"></div>
+        <p id="catalogHint" class="hint">Chats follow the order currently shown in the ChatGPT sidebar, with the most recent first. Press the ↗ icon on a selected legacy chat to start its work in a new conversation.</p>
 
-      <details id="chatConfigPanel" class="continuity">
+        <details id="chatConfigPanel" class="continuity">
         <summary>Per-chat prompt and repository overrides</summary>
         <div class="details-body">
           <label>
@@ -156,6 +157,15 @@
           </div>
           <p class="hint">Changes are autosaved when you type or switch chats. Blank values inherit the global settings. Initialization uses each chat's effective repository and continuity file.</p>
         </div>
+        </details>
+      </div>
+
+      <details id="progressPanel" class="progress-panel" hidden>
+        <summary>
+          <span>Run progress</span>
+          <small id="progressSummary">0 chats</small>
+        </summary>
+        <div id="progressList" class="progress-list"></div>
       </details>
     </section>
 
@@ -173,7 +183,7 @@
       </div>
     </section>
 
-    <p class="note">Each selected chat uses its own inactive managed tab and queues its next follow-up as soon as that chat finishes. Up to 12 chats can run concurrently. Repository continuity can add two checkpoint prompts around each work prompt, increasing message usage.</p>
+    <p class="note">Each selected chat uses its own inactive managed tab and queues its next follow-up as soon as that chat finishes. The ↗ option starts a legacy goal in a new chat immediately; without a verified repository handoff, the new chat only receives the configured prompt, title, and repository details. Up to 12 chats can run concurrently.</p>
   </main>
   <script src="popup.js"></script>
 </body>
