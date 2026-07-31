@@ -1,6 +1,6 @@
 # AutoPrompter for ChatGPT
 
-Current release: **2.2.0**
+Current release: **2.3.0**
 
 AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that cycles through selected ChatGPT conversations using one inactive managed tab. It can notify you when work prompts complete and, when explicitly configured, create successor chats from verified Git repository checkpoints.
 
@@ -15,7 +15,7 @@ AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that cycles th
 - Optional repository checkpoints before and after work.
 - Automatic successor chats for context exhaustion, verified prolonged stalls, or content-loss signals—but only when a repository checkpoint marker is available.
 - Incremental durability instructions that ask the selected repository tool to commit completed logical units before lengthy or risky work continues.
-- Global circuit breaker for rate limits, account restrictions, and safety blocks.
+- Default-on automatic circuit breaker for rate limits, account restrictions, and safety blocks, with an explicit disable option for false-positive troubleshooting.
 
 ## Install in Edge
 
@@ -39,13 +39,13 @@ The sidebar is virtualized, so the extension can discover only links present in 
 
 ## Per-chat settings and continuity initialization
 
-Each selected conversation can override the global follow-up prompt, GitHub repository, continuity file, plugin/tool instruction, and whether continuity is enabled. Open **Per-chat prompt and repository overrides**, choose a selected chat, and save only the fields that differ. Blank fields inherit the global settings.
+Each selected conversation can override the global follow-up prompt, GitHub repository, continuity file, plugin/tool instruction, and whether continuity is enabled. Open **Per-chat prompt and repository overrides** and choose a selected chat. Draft changes autosave while typing and are flushed before switching chats or starting a run. Blank fields inherit the global settings.
 
 Use **Initialize continuity** to send one purpose-built initialization prompt to every selected chat. Each chat uses its effective repository settings, creates or reconciles the continuity file, commits and pushes it through the configured action-capable tool, and must return an `AUTOPROMPTER_CHECKPOINT` marker. Initialization does not run the normal repeated work prompt.
 
 ## Circuit-breaker matching
 
-Restriction detection is intentionally exact and UI-scoped. Normal assistant prose that merely discusses rate limits, account restrictions, or safety controls does not activate the circuit breaker. Actual trusted notice containers and short assistant/system messages matching documented restriction wording still stop the scheduler.
+Restriction detection is intentionally exact and UI-scoped. Normal assistant prose that merely discusses rate limits, account restrictions, or safety controls does not activate the circuit breaker. Actual trusted notice containers and short assistant/system messages matching documented restriction wording still stop the scheduler. The popup includes **Disable automatic circuit breaker**, which is off by default and can be enabled when troubleshooting detector false positives. Disabling it affects only AutoPrompter's heuristic detector; it does not bypass ChatGPT controls.
 
 ## Notifications
 

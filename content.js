@@ -166,6 +166,19 @@
     return null;
   }
 
+
+  const CIRCUIT_BREAKER_KINDS = new Set([
+    "rate_limit",
+    "account_restriction",
+    "safety_restriction"
+  ]);
+
+  function shouldHandleInterruption(notice, settings) {
+    if (!notice) return false;
+    if (!CIRCUIT_BREAKER_KINDS.has(notice.kind)) return true;
+    return settings?.circuitBreakerEnabled !== false;
+  }
+
   function extractMarker(text, prefix) {
     const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const match = String(text || "").match(new RegExp(`${escaped}\\s*([A-Za-z0-9._/-]{7,160})`, "i"));
@@ -395,7 +408,7 @@
   function detectInterruption(settings, baseline = null) {
     for (const text of liveNoticeTexts()) {
       const notice = matureGuardrail(classifyGuardrailText(text, "notice"), settings);
-      if (notice) return notice;
+      if (shouldHandleInterruption(notice, settings)) return notice;
     }
 
     if (baseline && !isGenerating()) {
@@ -467,7 +480,7 @@
       const responseGuardrail = classifyGuardrailText(snapshot.text, "assistant");
       if (responseGuardrail) {
         const mature = matureGuardrail(responseGuardrail, settings);
-        if (mature) throw new JobInterruption(mature.kind, mature.message);
+        if (shouldHandleInterruption(mature, settings)) throw new JobInterruption(mature.kind, mature.message);
         if (responseGuardrail.kind === "stalled") return null;
       }
       return snapshot;
@@ -963,6 +976,7 @@
       shouldRolloverContext,
       classifyGuardrailText,
       matureGuardrail,
+      shouldHandleInterruption,
       buildDurableWorkPrompt,
       buildInitializationPrompt,
       extractCheckpointMarker,

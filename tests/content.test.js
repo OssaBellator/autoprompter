@@ -23,6 +23,7 @@ const {
   shouldRolloverContext,
   classifyGuardrailText,
   matureGuardrail,
+  shouldHandleInterruption,
   buildDurableWorkPrompt,
   buildInitializationPrompt,
   extractCheckpointMarker,
@@ -122,4 +123,15 @@ test("continuity initialization prompt creates and verifies durable state", () =
   assert.match(prompt, /Create the continuity file if it does not exist/);
   assert.match(prompt, /AUTOPROMPTER_CHECKPOINT:/);
   assert.match(prompt, /Verify the commit exists remotely/);
+});
+
+
+test("automatic circuit breaker can be disabled without disabling continuity interruptions", () => {
+  assert.equal(shouldHandleInterruption({ kind: "rate_limit" }, { circuitBreakerEnabled: true }), true);
+  assert.equal(shouldHandleInterruption({ kind: "rate_limit" }, { circuitBreakerEnabled: false }), false);
+  assert.equal(shouldHandleInterruption({ kind: "account_restriction" }, { circuitBreakerEnabled: false }), false);
+  assert.equal(shouldHandleInterruption({ kind: "safety_restriction" }, { circuitBreakerEnabled: false }), false);
+  assert.equal(shouldHandleInterruption({ kind: "context_limit" }, { circuitBreakerEnabled: false }), true);
+  assert.equal(shouldHandleInterruption({ kind: "content_removed" }, { circuitBreakerEnabled: false }), true);
+  assert.equal(shouldHandleInterruption({ kind: "stalled" }, { circuitBreakerEnabled: false }), true);
 });

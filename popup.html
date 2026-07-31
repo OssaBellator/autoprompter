@@ -38,6 +38,11 @@
         <input id="notifyOnPromptDone" type="checkbox">
         <span>Notify after each completed work prompt</span>
       </label>
+      <label class="check-row">
+        <input id="disableCircuitBreaker" type="checkbox">
+        <span>Disable automatic circuit breaker</span>
+      </label>
+      <p class="hint">When disabled, AutoPrompter ignores its own restriction-message detector. ChatGPT's platform controls still apply, and the extension does not dismiss or bypass them.</p>
     </section>
 
     <details id="continuityPanel" class="continuity">
@@ -149,7 +154,7 @@
             <button id="saveChatConfig" class="compact" type="button">Save override</button>
             <button id="clearChatConfig" class="compact" type="button">Clear override</button>
           </div>
-          <p class="hint">Blank values inherit the global settings. Initialization uses each chat's effective repository and continuity file.</p>
+          <p class="hint">Changes are autosaved when you type or switch chats. Blank values inherit the global settings. Initialization uses each chat's effective repository and continuity file.</p>
         </div>
       </details>
     </section>
