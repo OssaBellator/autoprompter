@@ -45,27 +45,27 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/expected-blobs <<'BLOBS'
-843726876d019488ef680e32b8d1529b37beac3b README.md
-b3173dafbfb6cfe257672794b3a16f943e39fb28 background.js
-62a8a84709f7433a823220485f28ac49cb6e7b02 docs/PROJECT_MODE_STATUS.md
-0906cf3ee0b97a43938ccd6d9ff8f718053d5807 docs/RFC-001-WEB-FIRST-MULTI_AGENT_RUNTIME.md
-0eb9553c6185dd75ff50ef1985b4a370e9ce2096 examples/sample-project/.autoprompter/dispatches/dispatch-project-schema-a1-example1.json
-c1b4f5d6d5a33513dadbbeffa853a29c5a30afaf examples/sample-project/.autoprompter/results/task-project-schema.json
-52ecc963eca199efa8cb00aaa2280e37794e9d69 package.json
-be886cabbff6ae16aab265559009aa052204b74c popup.css
-59a3f82f2802c4c52ca12e0564f9040c331ff327 popup.html
-b69556aed62931a6a8c8cc3bdd1432bccd62f3b2 popup.js
-d1f1b413d381ea7330bf20265ff9cc4507bfda12 project-store.js
-4bea9d74d61ffd534ce75ad87e178fa433b316d3 schemas/dispatch.schema.json
-84d49b3ab7150d0ead58eec7be1919a7485aef25 schemas/result.schema.json
-dd847094aa1b00147c00d7f93e92c80773c1944c schemas/task.schema.json
-bad3a95e685a1a5ed7b764d4681e5a37f49b2890 tests/popup-source.test.js
-f46b50db6e8bd87972d7119fc4954130064055ea tests/project-protocol.test.js
-b96928072755976b79888532dc9663f7893ab5a4 tests/project-runtime.test.js
-51776f0bf606db02add9e332d01164bcf8401de5 tests/project-store.test.js
-d2f1365a084aac0fb2743462cd134121d2415e80 tests/worker-protocol.test.js
-5df4600b12fcd1827a70579f55f5350735bec55a worker-protocol.js
-BLOBS
+          843726876d019488ef680e32b8d1529b37beac3b README.md
+          b3173dafbfb6cfe257672794b3a16f943e39fb28 background.js
+          62a8a84709f7433a823220485f28ac49cb6e7b02 docs/PROJECT_MODE_STATUS.md
+          0906cf3ee0b97a43938ccd6d9ff8f718053d5807 docs/RFC-001-WEB-FIRST-MULTI_AGENT_RUNTIME.md
+          0eb9553c6185dd75ff50ef1985b4a370e9ce2096 examples/sample-project/.autoprompter/dispatches/dispatch-project-schema-a1-example1.json
+          c1b4f5d6d5a33513dadbbeffa853a29c5a30afaf examples/sample-project/.autoprompter/results/task-project-schema.json
+          52ecc963eca199efa8cb00aaa2280e37794e9d69 package.json
+          be886cabbff6ae16aab265559009aa052204b74c popup.css
+          59a3f82f2802c4c52ca12e0564f9040c331ff327 popup.html
+          b69556aed62931a6a8c8cc3bdd1432bccd62f3b2 popup.js
+          d1f1b413d381ea7330bf20265ff9cc4507bfda12 project-store.js
+          4bea9d74d61ffd534ce75ad87e178fa433b316d3 schemas/dispatch.schema.json
+          84d49b3ab7150d0ead58eec7be1919a7485aef25 schemas/result.schema.json
+          dd847094aa1b00147c00d7f93e92c80773c1944c schemas/task.schema.json
+          bad3a95e685a1a5ed7b764d4681e5a37f49b2890 tests/popup-source.test.js
+          f46b50db6e8bd87972d7119fc4954130064055ea tests/project-protocol.test.js
+          b96928072755976b79888532dc9663f7893ab5a4 tests/project-runtime.test.js
+          51776f0bf606db02add9e332d01164bcf8401de5 tests/project-store.test.js
+          d2f1365a084aac0fb2743462cd134121d2415e80 tests/worker-protocol.test.js
+          5df4600b12fcd1827a70579f55f5350735bec55a worker-protocol.js
+          BLOBS
           while read -r expected path; do
             actual="$(git hash-object "$path")"
             test "$actual" = "$expected" || { echo "Blob mismatch for $path: $actual != $expected"; exit 1; }
