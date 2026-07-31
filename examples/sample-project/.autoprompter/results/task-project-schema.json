@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "1.0",
+  "projectId": "autoprompter-project-mode",
+  "taskId": "task-project-schema",
+  "attempt": 1,
+  "status": "completed",
+  "summary": "Defined versioned project, plan, task, and result contracts for the web-first multi-agent protocol.",
+  "commit": "1234567",
+  "tests": [
+    {
+      "command": "npm test",
+      "status": "passed",
+      "summary": "Protocol fixtures and dependency graph invariants passed."
+    }
+  ],
+  "filesChanged": [
+    "schemas/project.schema.json",
+    "schemas/plan.schema.json",
+    "schemas/task.schema.json",
+    "schemas/result.schema.json"
+  ],
+  "risks": [
+    "The first release uses lightweight invariant tests rather than a complete JSON Schema validator dependency."
+  ],
+  "followUpTaskSuggestions": [
+    "Add schema migrations before changing schemaVersion.",
+    "Add signed or independently verified result envelopes when repository tooling supports them."
+  ],
+  "producedAt": "2026-07-31T04:00:00Z"
+}
