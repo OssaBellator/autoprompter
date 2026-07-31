@@ -6,7 +6,7 @@ const assert = require("node:assert/strict");
 global.chrome = {
   runtime: {
     onMessage: { addListener() {} },
-    getManifest: () => ({ version: "2.3.0" }),
+    getManifest: () => ({ version: "2.4.0" }),
     getURL: value => `chrome-extension://test/${value}`
   },
   action: {},
@@ -24,6 +24,9 @@ const {
   isNewChatUrl,
   normalizeChat,
   nextEligibleIndex,
+  eligibleChatIndexes,
+  isChatEligible,
+  MAX_CONCURRENT_CHATS,
   buildSuccessorPrompt
 } = require("../background.js");
 
@@ -79,7 +82,7 @@ test("normalizes chat metadata with continuity state", () => {
   assert.equal(chat.lastCheckpoint, "");
 });
 
-test("scheduler rotates among eligible selected chats", () => {
+test("legacy eligibility helper still skips completed chats", () => {
   const chats = [
     { sentCount: 2, failed: false, retired: false },
     { sentCount: 0, failed: true, retired: false },
@@ -123,4 +126,18 @@ test("scheduler eligibility respects per-chat work limits", () => {
     { failed: false, retired: false, sentCount: 1, settings: { maxContinuations: 2 } }
   ];
   assert.equal(nextEligibleIndex(chats, -1, 5), 1);
+});
+
+
+test("concurrent scheduler selects every eligible chat at once", () => {
+  const chats = [
+    { sentCount: 0, failed: false, retired: false, settings: { maxContinuations: 2 } },
+    { sentCount: 1, failed: false, retired: false, settings: { maxContinuations: 2 } },
+    { sentCount: 2, failed: false, retired: false, settings: { maxContinuations: 2 } },
+    { sentCount: 0, failed: true, retired: false, settings: { maxContinuations: 2 } }
+  ];
+  assert.deepEqual(eligibleChatIndexes(chats, 2), [0, 1]);
+  assert.equal(isChatEligible({ settings: { maxContinuations: 2 } }, chats[0]), true);
+  assert.equal(isChatEligible({ settings: { maxContinuations: 2 } }, chats[2]), false);
+  assert.equal(MAX_CONCURRENT_CHATS, 12);
 });

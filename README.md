@@ -1,13 +1,14 @@
 # AutoPrompter for ChatGPT
 
-Current release: **2.3.0**
+Current release: **2.4.0**
 
-AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that cycles through selected ChatGPT conversations using one inactive managed tab. It can notify you when work prompts complete and, when explicitly configured, create successor chats from verified Git repository checkpoints.
+AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that runs selected ChatGPT conversations concurrently using one inactive managed tab per chat. Each chat independently queues its next follow-up as soon as its current response completes. It can notify you when work prompts complete and, when explicitly configured, create successor chats from verified Git repository checkpoints.
 
 ## Features
 
 - Discover chats currently loaded in the ChatGPT sidebar.
-- Select multiple conversations and process them round-robin through one managed tab.
+- Launch up to 12 selected conversations concurrently, using one isolated inactive managed tab per chat.
+- Queue each chat's next follow-up immediately when that chat completes, without waiting for slower chats.
 - Configurable work prompt, delay, and per-goal work-prompt limit.
 - Browser notifications for prompt completion, scheduler completion, errors, and handoffs.
 - Conservative response-completion and composer-ownership checks.
@@ -33,7 +34,7 @@ AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that cycles th
 3. Open AutoPrompter and press **Refresh**.
 4. Select the conversations.
 5. Configure the work prompt and limits.
-6. Press **Start selected**.
+6. Press **Start all selected**.
 
 The sidebar is virtualized, so the extension can discover only links present in the current page DOM. Repeatedly scroll and refresh to expand the saved local catalog.
 
@@ -46,6 +47,12 @@ Use **Initialize continuity** to send one purpose-built initialization prompt to
 ## Circuit-breaker matching
 
 Restriction detection is intentionally exact and UI-scoped. Normal assistant prose that merely discusses rate limits, account restrictions, or safety controls does not activate the circuit breaker. Actual trusted notice containers and short assistant/system messages matching documented restriction wording still stop the scheduler. The popup includes **Disable automatic circuit breaker**, which is off by default and can be enabled when troubleshooting detector false positives. Disabling it affects only AutoPrompter's heuristic detector; it does not bypass ChatGPT controls.
+
+## Concurrent scheduling
+
+AutoPrompter opens one inactive managed tab for every selected chat, up to 12 chats per run. Initial prompts are launched together. Afterward, each chat advances independently: whichever response finishes first receives its next follow-up first, while slower chats continue working without blocking the queue.
+
+Concurrent prompting can consume account allowances faster and can make rate-limit notices more likely. Use a conservative delay, keep the selected batch small, and leave the automatic circuit breaker enabled unless false positives require disabling it. Inactive tabs may also be throttled by the browser.
 
 ## Notifications
 
@@ -118,7 +125,7 @@ See [`docs/MULTI_AGENT_ROADMAP.md`](docs/MULTI_AGENT_ROADMAP.md) for a planned, 
 ## Known limitations
 
 - ChatGPT DOM changes can break selectors.
-- A hidden/inactive tab may be throttled by the browser.
+- Hidden/inactive managed tabs may be throttled by the browser, especially when many chats run concurrently.
 - Context and guardrail detection are heuristic.
 - Notification delivery depends on browser and operating-system settings.
 - Plugin availability and capabilities vary by plan, workspace, region, and product surface.

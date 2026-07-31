@@ -11,7 +11,7 @@
     <header>
       <div>
         <h1>AutoPrompter</h1>
-        <p>Continue selected chats through one managed tab</p>
+        <p>Run selected chats concurrently in managed tabs</p>
       </div>
     </header>
 
@@ -160,7 +160,7 @@
     </section>
 
     <div class="actions">
-      <button id="start" class="primary" type="button">Start selected</button>
+      <button id="start" class="primary" type="button">Start all selected</button>
       <button id="initializeContinuity" type="button">Initialize continuity</button>
       <button id="stop" type="button">Stop all</button>
     </div>
@@ -173,7 +173,7 @@
       </div>
     </section>
 
-    <p class="note">Repository continuity can add two checkpoint prompts around each work prompt. This improves recoverability but consumes more of your message allowance.</p>
+    <p class="note">Each selected chat uses its own inactive managed tab and queues its next follow-up as soon as that chat finishes. Up to 12 chats can run concurrently. Repository continuity can add two checkpoint prompts around each work prompt, increasing message usage.</p>
   </main>
   <script src="popup.js"></script>
 </body>
