@@ -18,7 +18,7 @@ function clone(value) {
 
 global.chrome = {
   runtime: {
-    getManifest: () => ({ version: "2.5.0" }),
+    getManifest: () => ({ version: "2.6.0" }),
     onMessage: { addListener(listener) { runtimeListener = listener; } }
   },
   storage: {
@@ -162,7 +162,7 @@ test("a selected legacy chat can start directly in a new conversation", async ()
     mode: "work"
   });
   const chat = started.chats[0];
-  assert.equal(tabs.get(chat.workerTabId).url, "https://chatgpt.com/");
+  assert.match(tabs.get(chat.workerTabId).url, /^https:\/\/chatgpt\.com\/\?autoprompter_fresh=/);
   assert.equal(chat.pendingSuccessor.kind, "forced_start");
 
   await dispatch({ scope: "AUTOPROMPTER_RUNTIME", type: "CONTENT_READY" }, { tab: { id: chat.workerTabId } });
@@ -196,5 +196,79 @@ test("an unverified context-limit interruption opens a best-effort successor", a
   assert.equal(state.running, true);
   assert.equal(state.chats[0].failed, false);
   assert.equal(state.chats[0].pendingSuccessor.kind, "best_effort");
-  assert.equal(tabs.get(state.chats[0].workerTabId).url, "https://chatgpt.com/");
+  assert.match(tabs.get(state.chats[0].workerTabId).url, /^https:\/\/chatgpt\.com\/\?autoprompter_fresh=/);
+});
+
+test("fresh-start job is sent even when ChatGPT restores the parent route", async () => {
+  resetHarness();
+  const started = await dispatch({
+    scope: "AUTOPROMPTER_RUNTIME",
+    type: "START_SCHEDULER",
+    chats: [{
+      id: "legacy-route",
+      title: "Legacy route",
+      url: "https://chatgpt.com/c/legacy-route",
+      startInNewChat: true,
+      settings: { prompt: "Continue the legacy work", maxContinuations: 2 }
+    }],
+    settings: { delaySeconds: 5, maxContinuations: 2 },
+    mode: "work"
+  });
+  const chat = started.chats[0];
+  tabs.get(chat.workerTabId).url = chat.url;
+
+  await dispatch(
+    { scope: "AUTOPROMPTER_RUNTIME", type: "CONTENT_READY" },
+    { tab: { id: chat.workerTabId } }
+  );
+
+  const job = sentMessages.find(item => item.message.type === "RUN_SUCCESSOR_JOB");
+  assert.ok(job);
+  assert.equal(job.message.parentConversationId, "legacy-route");
+  assert.ok(job.message.freshRequestId);
+});
+
+test("connection interruption queues a continue retry without consuming progress", async () => {
+  resetHarness();
+  const started = await dispatch({
+    scope: "AUTOPROMPTER_RUNTIME",
+    type: "START_SCHEDULER",
+    chats: [{
+      id: "unstable",
+      title: "Unstable chat",
+      url: "https://chatgpt.com/c/unstable",
+      settings: { prompt: "Original long work prompt", maxContinuations: 2 }
+    }],
+    settings: { delaySeconds: 5, maxContinuations: 2 },
+    mode: "work"
+  });
+  const before = clone(sessionStore.autoprompterScheduler);
+  const chat = before.chats[0];
+
+  await dispatch({
+    scope: "AUTOPROMPTER_RUNTIME",
+    type: "JOB_INTERRUPTED",
+    token: before.token,
+    jobId: chat.currentJobId,
+    kind: "connection_interrupted",
+    message: "Connection interrupted. Waiting for the complete answer"
+  }, { tab: { id: chat.workerTabId } });
+
+  const retried = clone(sessionStore.autoprompterScheduler);
+  assert.equal(retried.chats[0].sentCount, 0);
+  assert.equal(retried.chats[0].connectionRetryCount, 1);
+  assert.match(retried.chats[0].retryPrompt, /response was interrupted/i);
+  assert.notEqual(retried.chats[0].currentJobId, chat.currentJobId);
+
+  sentMessages.length = 0;
+  await dispatch(
+    { scope: "AUTOPROMPTER_RUNTIME", type: "CONTENT_READY" },
+    { tab: { id: retried.chats[0].workerTabId } }
+  );
+  const retryJob = sentMessages.find(item => item.message.type === "RUN_CHAT_JOB");
+  assert.ok(retryJob);
+  assert.equal(retryJob.message.mode, "connection_retry");
+  assert.match(retryJob.message.settings.prompt, /response was interrupted/i);
+  assert.equal(retryJob.message.settings.checkpointBeforePrompt, false);
+  assert.equal(retryJob.message.settings.checkpointAfterPrompt, false);
 });

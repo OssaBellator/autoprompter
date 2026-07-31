@@ -6,7 +6,7 @@ const assert = require("node:assert/strict");
 global.chrome = {
   runtime: {
     onMessage: { addListener() {} },
-    getManifest: () => ({ version: "2.5.0" }),
+    getManifest: () => ({ version: "2.6.0" }),
     getURL: value => `chrome-extension://test/${value}`
   },
   action: {},
@@ -156,4 +156,14 @@ test("fresh-start prompt is explicit about missing legacy context", () => {
   assert.match(prompt, /Repository: owner\/repo/);
   assert.match(prompt, /Continue the unfinished implementation/);
   assert.match(prompt, /create the continuity file/i);
+});
+
+test("fresh-chat URLs include a unique navigation marker", () => {
+  const { freshChatUrl, CONNECTION_RETRY_PROMPT, MAX_CONNECTION_RETRIES } = require("../background.js");
+  const url = new URL(freshChatUrl("token", "chain", "job"));
+  assert.equal(url.origin, "https://chatgpt.com");
+  assert.equal(url.pathname, "/");
+  assert.match(url.searchParams.get("autoprompter_fresh"), /token:chain:job/);
+  assert.match(CONNECTION_RETRY_PROMPT, /response was interrupted/i);
+  assert.equal(MAX_CONNECTION_RETRIES, 3);
 });
