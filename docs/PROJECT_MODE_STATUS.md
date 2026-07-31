@@ -13,6 +13,10 @@ Project Mode is being developed on `agent/web-first-multi-agent-project-mode`. I
 
 Planner and worker prompts are generated for manual use. Starting a project changes only extension-local state. Preparing assignments does not open tabs, send ChatGPT messages, write repositories, run task commands, or claim that a worker executed anything. Active leases are local coordination records and expire automatically.
 
+## Milestone 4 validation
+
+The lease-preparation milestone passed 82 automated tests, JavaScript syntax checks, JSON validation, patch-integrity checks, and exact Git blob verification before its source commit was created.
+
 ## Next milestone
 
 Add strict `AUTOPROMPTER_TASK_RESULT_BEGIN` / `AUTOPROMPTER_TASK_RESULT_END` parsing, dispatch/result identity checks, verification-evidence validation, and explicit reviewer acceptance or bounded revision decisions. Live worker submission remains disabled until result handling and recovery are complete.
