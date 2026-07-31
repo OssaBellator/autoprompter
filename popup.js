@@ -5,6 +5,7 @@ const SETTINGS_KEY = "autoprompterSettings";
 const CATALOG_KEY = "autoprompterChatCatalog";
 const SELECTION_KEY = "autoprompterSelectedChatIds";
 const CHAT_CONFIGS_KEY = "autoprompterChatConfigs";
+const MAX_CONCURRENT_CHATS = 12;
 const DEFAULTS = Object.freeze({
   prompt: "Continue from where you left off. Do not repeat completed material.",
   delaySeconds: 10,
@@ -241,7 +242,7 @@ function renderCatalog() {
     elements.chatList.append(row);
   }
 
-  elements.selectionSummary.textContent = `${selectedIds.size} selected · ${catalog.length} discovered`;
+  elements.selectionSummary.textContent = `${selectedIds.size} selected · ${catalog.length} discovered · max ${MAX_CONCURRENT_CHATS} concurrent`;
   const running = Boolean(schedulerState?.running);
   elements.start.disabled = running || selectedIds.size === 0;
   elements.initializeContinuity.disabled = running || selectedIds.size === 0;
@@ -295,6 +296,7 @@ async function start(mode = "work") {
     await captureChatEditor({ persist: true });
     const settings = await saveSettings();
     const chats = selectedChats(settings, mode);
+    if (chats.length > MAX_CONCURRENT_CHATS) throw new Error(`Select at most ${MAX_CONCURRENT_CHATS} chats for one concurrent run.`);
     if (mode === "work") {
       const missing = chats.filter(chat => chat.settings.continuityEnabled && !chat.settings.repository);
       if (missing.length) throw new Error(`Add a repository for: ${missing.map(chat => chat.title).join(", ")}`);

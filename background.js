@@ -7,6 +7,7 @@ const CATALOG_KEY = "autoprompterChatCatalog";
 const SELECTION_KEY = "autoprompterSelectedChatIds";
 const CHAT_CONFIGS_KEY = "autoprompterChatConfigs";
 const NEW_CHAT_URL = "https://chatgpt.com/";
+const MAX_CONCURRENT_CHATS = 12;
 const NOTIFICATION_ICON_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABPUlEQVR4nO2ZMQ7CQAwEF0QPL4UO3kDJT/kBVCehFChxfDeWbqfPaT34HKMczvfrRxNzpAPQWAAdgMYC6AA0FkAHoLEAOgCNBdABaCyADkBzyjjk/XxlHBPi8rjtev6w5+8wWfiSqIjwFahUvBTPExJQrfhGJNf0Q3CzgKq/fmNrPncAHYDGAugANCmb4JK929k/sodwegf0LL7H+dNfAQvIPrD3opR9fpchWH1b/MVXgA5AM72AsovQqDlSdhHqvVA1pr8CFpB9YNbdHTUDvAjRAWgsYOsDo15PUbbmcwdEHqraBZFc4Q6oJiGaZ9fX4ca0n8fXsFYO1VElhiB5nXAB9CxBBdDFS6CACsVLkIAqxUuAgErFS4MFVCteGiigYvHSIAFVi5cGbILVwRchGgugA9BYAB2AxgLoADRfdOpG+jsXCCIAAAAASUVORK5CYII=";
 
 const DEFAULTS = Object.freeze({
@@ -145,6 +146,9 @@ function normalizeChat(chat, baseSettings = DEFAULTS) {
     lastCheckpoint: "",
     contextEstimateTokens: 0,
     contextPercent: 0,
+    workerTabId: null,
+    currentJobId: null,
+    pendingSuccessor: null,
     settings: normalizeSettings({ ...baseSettings, ...(chat?.settings || {}) })
   };
 }
@@ -177,12 +181,47 @@ function buildSuccessorPrompt(settings, chat, checkpoint, reason) {
   ].filter(Boolean).join("\n");
 }
 
+function chatLimit(state, chat) {
+  return Number(chat?.settings?.maxContinuations || state?.settings?.maxContinuations || DEFAULTS.maxContinuations);
+}
+
+function isChatEligible(state, chat) {
+  return Boolean(chat && !chat.failed && !chat.retired && Number(chat.sentCount || 0) < chatLimit(state, chat));
+}
+
+function eligibleChatIndexes(chats, maxContinuations = DEFAULTS.maxContinuations) {
+  const state = { settings: { maxContinuations } };
+  return (Array.isArray(chats) ? chats : [])
+    .map((chat, index) => isChatEligible(state, chat) ? index : -1)
+    .filter(index => index >= 0);
+}
+
+function findChatIndexByTab(state, tabId) {
+  if (!Number.isInteger(tabId)) return -1;
+  return state?.chats?.findIndex(chat => chat.workerTabId === tabId) ?? -1;
+}
+
+function findChatIndexForMessage(state, message, sender) {
+  if (!state?.running || message?.token !== state.token) return -1;
+  const index = findChatIndexByTab(state, sender?.tab?.id);
+  if (index < 0) return -1;
+  return state.chats[index].currentJobId === message.jobId ? index : -1;
+}
+
+function updateOverallStatus(state, recent = "") {
+  const active = state.chats.filter(chat => Number.isInteger(chat.workerTabId) && chat.currentJobId).length;
+  const finished = state.chats.filter(chat => !isChatEligible(state, chat)).length;
+  const total = state.chats.length;
+  state.status = recent || `Running ${active} chat${active === 1 ? "" : "s"} concurrently · ${finished}/${total} complete`;
+}
+
 function publicState(state) {
   const version = chrome.runtime.getManifest().version;
   if (!state) return {
     running: false,
     status: "Stopped",
     chats: [],
+    workerTabIds: [],
     settings: { ...DEFAULTS },
     handoffHistory: [],
     version
@@ -193,13 +232,11 @@ function publicState(state) {
     status: state.status || "Stopped",
     lastError: state.lastError || "",
     pausedReason: state.pausedReason || "",
-    workerTabId: state.workerTabId ?? null,
-    currentIndex: Number.isInteger(state.currentIndex) ? state.currentIndex : -1,
+    workerTabIds: (state.chats || []).map(chat => chat.workerTabId).filter(Number.isInteger),
     chats: Array.isArray(state.chats) ? state.chats : [],
     settings: normalizeSettings(state.settings),
     mode: state.mode || "work",
     startedAt: state.startedAt || null,
-    pendingSuccessor: state.pendingSuccessor || null,
     handoffHistory: Array.isArray(state.handoffHistory) ? state.handoffHistory : [],
     version
   };
@@ -250,38 +287,42 @@ async function removeManagedTab(tabId) {
   }
 }
 
-async function stopScheduler(reason = "Stopped", error = "", closeWorker = true, notifyUser = false) {
+async function removeManagedTabs(tabIds) {
+  await Promise.all([...new Set((tabIds || []).filter(Number.isInteger))].map(removeManagedTab));
+}
+
+async function stopScheduler(reason = "Stopped", error = "", closeWorkers = true, notifyUser = false) {
   const state = await loadState();
   if (!state) return publicState(null);
 
+  const tabIds = (state.chats || []).map(chat => chat.workerTabId).filter(Number.isInteger);
   const stopped = {
     ...state,
     running: false,
     token: Number(state.token || 0) + 1,
-    workerTabId: null,
-    currentJobId: null,
-    pendingSuccessor: null,
     status: reason,
     lastError: error,
-    pausedReason: error || reason
+    pausedReason: error || reason,
+    chats: (state.chats || []).map(chat => ({
+      ...chat,
+      workerTabId: null,
+      currentJobId: null,
+      pendingSuccessor: null,
+      status: chat.status === "Finished" || chat.status === "Initialized" || chat.retired || chat.failed
+        ? chat.status
+        : "Stopped"
+    }))
   };
-  stopped.chats = (stopped.chats || []).map(chat => ({
-    ...chat,
-    status: chat.status === "Finished" || chat.retired || chat.failed ? chat.status : "Stopped"
-  }));
   await saveState(stopped);
 
-  if (Number.isInteger(state.workerTabId)) {
+  await Promise.all(tabIds.map(async tabId => {
     try {
-      await chrome.tabs.sendMessage(state.workerTabId, {
-        type: "CANCEL_CHAT_JOB",
-        token: stopped.token
-      });
+      await chrome.tabs.sendMessage(tabId, { type: "CANCEL_CHAT_JOB", token: stopped.token });
     } catch {
-      // The page may be navigating.
+      // A worker may be navigating or already closed.
     }
-    if (closeWorker) await removeManagedTab(state.workerTabId);
-  }
+  }));
+  if (closeWorkers) await removeManagedTabs(tabIds);
 
   if (notifyUser) await notify(stopped, "AutoPrompter stopped", error || reason, "stopped");
   return publicState(stopped);
@@ -305,29 +346,30 @@ async function saveSuccessorToCatalog(chat, parentId = "") {
   });
 }
 
-async function sendCurrentJob(state) {
-  if (!state?.running || !Number.isInteger(state.workerTabId) || !state.currentJobId) return;
+async function sendChatJob(state, index) {
+  const chat = state?.chats?.[index];
+  if (!state?.running || !chat || !Number.isInteger(chat.workerTabId) || !chat.currentJobId) return;
 
   let tab;
   try {
-    tab = await chrome.tabs.get(state.workerTabId);
+    tab = await chrome.tabs.get(chat.workerTabId);
   } catch {
-    await stopScheduler("Stopped", "The managed ChatGPT tab was closed.", false, true);
+    await failChatWorker(state, index, "The managed ChatGPT tab was closed.", false);
     return;
   }
 
-  if (state.pendingSuccessor) {
+  if (chat.pendingSuccessor) {
     if (!isNewChatUrl(tab.url || "")) return;
     try {
-      await chrome.tabs.sendMessage(state.workerTabId, {
+      await chrome.tabs.sendMessage(chat.workerTabId, {
         type: "RUN_SUCCESSOR_JOB",
         token: state.token,
-        jobId: state.currentJobId,
-        parentChat: state.pendingSuccessor.parentChat,
-        settings: state.pendingSuccessor.settings || state.settings,
-        prompt: state.pendingSuccessor.prompt,
-        checkpoint: state.pendingSuccessor.checkpoint,
-        reason: state.pendingSuccessor.reason
+        jobId: chat.currentJobId,
+        parentChat: chat.pendingSuccessor.parentChat,
+        settings: chat.pendingSuccessor.settings || chat.settings || state.settings,
+        prompt: chat.pendingSuccessor.prompt,
+        checkpoint: chat.pendingSuccessor.checkpoint,
+        reason: chat.pendingSuccessor.reason
       });
     } catch {
       // The content script will announce readiness after navigation settles.
@@ -335,16 +377,14 @@ async function sendCurrentJob(state) {
     return;
   }
 
-  const chat = state.chats?.[state.currentIndex];
-  if (!chat) return;
   const current = normalizeConversationUrl(tab.url || "");
   if (!current || current.id !== chat.id) return;
 
   try {
-    await chrome.tabs.sendMessage(state.workerTabId, {
+    await chrome.tabs.sendMessage(chat.workerTabId, {
       type: "RUN_CHAT_JOB",
       token: state.token,
-      jobId: state.currentJobId,
+      jobId: chat.currentJobId,
       chat: { ...chat },
       settings: chat.settings || state.settings,
       mode: state.mode || "work"
@@ -354,89 +394,147 @@ async function sendCurrentJob(state) {
   }
 }
 
-async function advanceScheduler(state) {
+async function maybeFinishScheduler(state) {
   if (!state?.running) return publicState(state);
-
-  const nextIndex = nextEligibleIndex(
-    state.chats,
-    Number.isInteger(state.currentIndex) ? state.currentIndex : -1,
-    state.settings.maxContinuations
-  );
-
-  if (nextIndex < 0) {
-    const workerTabId = state.workerTabId;
-    state.running = false;
-    state.status = state.chats.some(chat => chat.failed)
-      ? "Finished with errors"
-      : "Finished";
-    state.workerTabId = null;
-    state.currentJobId = null;
-    state.pendingSuccessor = null;
-    state.chats = state.chats.map(chat => ({
-      ...chat,
-      status: chat.failed ? "Error" : (chat.retired ? chat.status : (state.mode === "initialize" ? "Initialized" : "Finished"))
-    }));
+  if (state.chats.some(chat => isChatEligible(state, chat))) {
+    updateOverallStatus(state);
     await saveState(state);
-    await removeManagedTab(workerTabId);
-    await notify(state, "AutoPrompter finished", state.status, "finished");
     return publicState(state);
   }
 
-  const chat = state.chats[nextIndex];
+  const tabIds = state.chats.map(chat => chat.workerTabId).filter(Number.isInteger);
+  state.running = false;
+  state.status = state.chats.some(chat => chat.failed) ? "Finished with errors" : "Finished";
+  state.chats = state.chats.map(chat => ({
+    ...chat,
+    workerTabId: null,
+    currentJobId: null,
+    pendingSuccessor: null,
+    status: chat.failed ? "Error" : (chat.retired ? chat.status : (state.mode === "initialize" ? "Initialized" : "Finished"))
+  }));
+  await saveState(state);
+  await removeManagedTabs(tabIds);
+  await notify(state, "AutoPrompter finished", state.status, "finished");
+  return publicState(state);
+}
+
+async function failChatWorker(state, index, error, closeWorker = true) {
+  const chat = state?.chats?.[index];
+  if (!chat) return publicState(state);
+  const tabId = chat.workerTabId;
+  chat.failed = true;
+  chat.status = "Error";
+  chat.lastError = String(error || "The chat job failed.").slice(0, 500);
+  chat.workerTabId = null;
+  chat.currentJobId = null;
+  chat.pendingSuccessor = null;
+  state.lastError = `${chat.title}: ${chat.lastError}`;
+  updateOverallStatus(state, `${chat.title}: Error`);
+  await saveState(state);
+  if (closeWorker) await removeManagedTab(tabId);
+  await notify(state, `AutoPrompter error: ${chat.title}`, chat.lastError, `error-${chat.id}`);
+  return maybeFinishScheduler(state);
+}
+
+async function queueNextChatJob(state, index) {
+  const chat = state?.chats?.[index];
+  if (!state?.running || !isChatEligible(state, chat)) return maybeFinishScheduler(state);
+
   const jobNumber = Number(chat.sentCount || 0) + 1;
-  state.currentIndex = nextIndex;
-  state.currentJobId = `${state.token}:${chat.id}:${jobNumber}:${Date.now()}`;
-  state.pendingSuccessor = null;
-  state.status = `Loading ${chat.title}`;
+  chat.currentJobId = `${state.token}:${chat.chainId}:${jobNumber}:${Date.now()}`;
+  chat.pendingSuccessor = null;
+  chat.status = "Loading";
+  chat.lastError = "";
   state.lastError = "";
   state.pausedReason = "";
-  state.chats = state.chats.map((entry, index) => index === nextIndex
-    ? { ...entry, status: "Loading", lastError: "" }
-    : entry);
+  updateOverallStatus(state, `${chat.title}: Loading next prompt`);
   await saveState(state);
 
-  let tab;
-  try {
-    tab = await chrome.tabs.get(state.workerTabId);
-  } catch {
-    tab = null;
+  let tab = null;
+  if (Number.isInteger(chat.workerTabId)) {
+    try { tab = await chrome.tabs.get(chat.workerTabId); } catch { tab = null; }
   }
-
   if (!tab) {
     try {
       tab = await chrome.tabs.create({ url: "about:blank", active: false });
-      state.workerTabId = tab.id;
+      chat.workerTabId = tab.id;
       await saveState(state);
-      await chrome.tabs.update(tab.id, { url: chat.url, active: false });
     } catch (error) {
-      state.running = false;
-      state.workerTabId = null;
-      state.currentJobId = null;
-      state.status = "Stopped";
-      state.lastError = `Could not open the managed ChatGPT tab: ${error.message}`;
-      await saveState(state);
-      if (tab?.id) await removeManagedTab(tab.id);
-      await notify(state, "AutoPrompter stopped", state.lastError, "tab-error");
+      return failChatWorker(state, index, `Could not create a managed ChatGPT tab: ${error.message}`, false);
     }
-    return publicState(state);
   }
 
   const current = normalizeConversationUrl(tab.url || "");
   if (current?.id === chat.id && tab.status === "complete") {
-    await sendCurrentJob(state);
-  } else {
-    try {
-      await chrome.tabs.update(state.workerTabId, { url: chat.url, active: false });
-    } catch (error) {
-      return stopScheduler("Stopped", `Could not open ${chat.title}: ${error.message}`, true, true);
-    }
+    await sendChatJob(state, index);
+    return publicState(state);
+  }
+
+  try {
+    await chrome.tabs.update(chat.workerTabId, { url: chat.url, active: false });
+  } catch (error) {
+    return failChatWorker(state, index, `Could not open ${chat.title}: ${error.message}`);
   }
   return publicState(state);
 }
 
+async function launchAllWorkers(state) {
+  const indexes = eligibleChatIndexes(state.chats, state.settings.maxContinuations);
+  for (const index of indexes) {
+    const chat = state.chats[index];
+    chat.currentJobId = `${state.token}:${chat.chainId}:1:${Date.now()}:${index}`;
+    chat.pendingSuccessor = null;
+    chat.status = "Opening worker";
+    chat.lastError = "";
+  }
+  updateOverallStatus(state, `Opening ${indexes.length} chats concurrently`);
+  await saveState(state);
+
+  const createResults = await Promise.allSettled(indexes.map(() => chrome.tabs.create({ url: "about:blank", active: false })));
+  for (let offset = 0; offset < indexes.length; offset += 1) {
+    const index = indexes[offset];
+    const result = createResults[offset];
+    if (result.status === "fulfilled" && Number.isInteger(result.value?.id)) {
+      state.chats[index].workerTabId = result.value.id;
+      state.chats[index].status = "Loading";
+    } else {
+      state.chats[index].failed = true;
+      state.chats[index].status = "Error";
+      state.chats[index].lastError = `Could not create a managed ChatGPT tab: ${result.reason?.message || result.reason || "unknown error"}`;
+      state.chats[index].currentJobId = null;
+    }
+  }
+  updateOverallStatus(state);
+  await saveState(state);
+
+  const navigations = indexes
+    .filter(index => Number.isInteger(state.chats[index].workerTabId))
+    .map(async index => {
+      const chat = state.chats[index];
+      try {
+        await chrome.tabs.update(chat.workerTabId, { url: chat.url, active: false });
+      } catch (error) {
+        const tabId = chat.workerTabId;
+        chat.workerTabId = null;
+        chat.currentJobId = null;
+        chat.failed = true;
+        chat.status = "Error";
+        chat.lastError = `Could not open ${chat.title}: ${error.message}`;
+        await removeManagedTab(tabId);
+      }
+    });
+  await Promise.all(navigations);
+  updateOverallStatus(state);
+  await saveState(state);
+
+  for (const chat of state.chats.filter(item => item.failed && item.lastError)) {
+    await notify(state, `AutoPrompter error: ${chat.title}`, chat.lastError, `launch-${chat.id}`);
+  }
+  return maybeFinishScheduler(state);
+}
+
 async function startScheduler(chats, settings, mode = "work") {
   const normalizedSettings = normalizeSettings(settings);
-
   const normalizedChats = [];
   const seen = new Set();
   for (const chat of Array.isArray(chats) ? chats : []) {
@@ -449,6 +547,10 @@ async function startScheduler(chats, settings, mode = "work") {
     normalizedChats.push(normalized);
   }
   if (normalizedChats.length === 0) throw new Error("Select at least one ChatGPT conversation.");
+  if (normalizedChats.length > MAX_CONCURRENT_CHATS) {
+    throw new Error(`Select at most ${MAX_CONCURRENT_CHATS} chats for one concurrent run.`);
+  }
+
   const normalizedMode = mode === "initialize" ? "initialize" : "work";
   if (normalizedMode === "initialize") {
     for (const chat of normalizedChats) {
@@ -465,11 +567,7 @@ async function startScheduler(chats, settings, mode = "work") {
   const state = {
     running: true,
     token: Math.max(Date.now(), Number(previous?.token || 0) + 2),
-    workerTabId: null,
-    currentIndex: -1,
-    currentJobId: null,
-    pendingSuccessor: null,
-    status: "Starting",
+    status: "Starting concurrent workers",
     lastError: "",
     pausedReason: "",
     settings: normalizedSettings,
@@ -480,134 +578,122 @@ async function startScheduler(chats, settings, mode = "work") {
   };
   await clearBadge();
   await saveState(state);
-  return advanceScheduler(state);
+  return launchAllWorkers(state);
 }
 
 async function updateJobStatus(message, sender) {
   const state = await loadState();
-  if (!state?.running || sender.tab?.id !== state.workerTabId) return publicState(state);
-  if (message.token !== state.token || message.jobId !== state.currentJobId) return publicState(state);
-
-  const chat = state.chats[state.currentIndex];
-  if (!chat) return publicState(state);
+  const index = findChatIndexForMessage(state, message, sender);
+  if (index < 0) return publicState(state);
+  const chat = state.chats[index];
   chat.status = String(message.status || "Working").slice(0, 160);
   if (Number.isFinite(message.contextEstimateTokens)) chat.contextEstimateTokens = Math.round(message.contextEstimateTokens);
   if (Number.isFinite(message.contextPercent)) chat.contextPercent = Math.round(message.contextPercent * 10) / 10;
-  state.status = `${chat.title}: ${chat.status}`;
+  updateOverallStatus(state, `${chat.title}: ${chat.status}`);
   await saveState(state);
   return publicState(state);
 }
 
 async function finishJob(message, sender) {
   const state = await loadState();
-  if (!state?.running || sender.tab?.id !== state.workerTabId) return publicState(state);
-  if (message.token !== state.token || message.jobId !== state.currentJobId) return publicState(state);
-
-  const chat = state.chats[state.currentIndex];
-  if (!chat) return publicState(state);
+  const index = findChatIndexForMessage(state, message, sender);
+  if (index < 0) return publicState(state);
+  const chat = state.chats[index];
   chat.sentCount = Number(chat.sentCount || 0) + 1;
-  const chatLimit = Number(chat.settings?.maxContinuations || state.settings.maxContinuations);
-  chat.status = message.initialized ? "Initialized" : (chat.sentCount >= chatLimit ? "Finished" : "Queued");
+  chat.currentJobId = null;
   chat.lastError = "";
   if (message.checkpoint) chat.lastCheckpoint = String(message.checkpoint).slice(0, 200);
   if (Number.isFinite(message.contextEstimateTokens)) chat.contextEstimateTokens = Math.round(message.contextEstimateTokens);
   if (Number.isFinite(message.contextPercent)) chat.contextPercent = Math.round(message.contextPercent * 10) / 10;
-  state.currentJobId = null;
+
+  const completed = Boolean(message.initialized) || !isChatEligible(state, chat);
+  chat.status = message.initialized ? "Initialized" : (completed ? "Finished" : "Queued");
+  updateOverallStatus(state, `${chat.title}: ${chat.status}`);
   await saveState(state);
 
   if (state.settings.notifyOnPromptDone) {
     await notify(
       state,
       message.initialized ? `Continuity initialized: ${chat.title}` : `Prompt completed: ${chat.title}`,
-      `${chat.sentCount}/${Number(chat.settings?.maxContinuations || state.settings.maxContinuations)}${chat.lastCheckpoint ? ` · checkpoint ${chat.lastCheckpoint}` : ""}`,
+      `${chat.sentCount}/${chatLimit(state, chat)}${chat.lastCheckpoint ? ` · checkpoint ${chat.lastCheckpoint}` : ""}`,
       `prompt-${chat.id}`
     );
   }
-  return advanceScheduler(state);
+
+  if (completed) {
+    const tabId = chat.workerTabId;
+    chat.workerTabId = null;
+    await saveState(state);
+    await removeManagedTab(tabId);
+    return maybeFinishScheduler(state);
+  }
+  return queueNextChatJob(state, index);
 }
 
 async function failJob(message, sender) {
   const state = await loadState();
-  if (!state?.running || sender.tab?.id !== state.workerTabId) return publicState(state);
-  if (message.token !== state.token || message.jobId !== state.currentJobId) return publicState(state);
-
-  const chat = state.chats[state.currentIndex];
-  if (!chat) return publicState(state);
-  chat.failed = true;
-  chat.status = "Error";
-  chat.lastError = String(message.error || "The chat job failed.").slice(0, 500);
-  state.lastError = `${chat.title}: ${chat.lastError}`;
-  state.currentJobId = null;
-  await saveState(state);
-  await notify(state, `AutoPrompter error: ${chat.title}`, chat.lastError, `error-${chat.id}`);
-  return advanceScheduler(state);
+  const index = findChatIndexForMessage(state, message, sender);
+  if (index < 0) return publicState(state);
+  return failChatWorker(state, index, message.error || "The chat job failed.");
 }
 
-async function beginSuccessor(state, chat, message) {
+async function beginSuccessor(state, index, message) {
+  const chat = state.chats[index];
   const chatSettings = chat.settings || state.settings;
   const checkpoint = String(message.checkpoint || chat.lastCheckpoint || "").slice(0, 200);
   const reason = String(message.reason || message.message || "Continuity rollover requested.").slice(0, 500);
   const rolloverCount = Number(chat.rolloverCount || 0) + 1;
   if (!chatSettings.continuityEnabled || !chatSettings.repository) {
-    return stopScheduler("Continuity handoff required", reason, true, true);
+    return failChatWorker(state, index, `Continuity handoff required: ${reason}`);
   }
   if (!checkpoint) {
-    return stopScheduler(
-      "Continuity handoff blocked",
-      `${reason} No verified repository checkpoint was available, so no successor chat was opened.`,
-      true,
-      true
-    );
+    return failChatWorker(state, index, `${reason} No verified repository checkpoint was available, so no successor chat was opened.`);
   }
   if (rolloverCount > chatSettings.maxRollovers) {
-    return stopScheduler(
-      "Rollover limit reached",
-      `The chat reached the configured limit of ${chatSettings.maxRollovers} successor chats.`,
-      true,
-      true
-    );
+    return failChatWorker(state, index, `The chat reached the configured limit of ${chatSettings.maxRollovers} successor chats.`);
   }
 
   chat.status = "Creating successor";
   chat.lastCheckpoint = checkpoint;
   chat.rolloverCount = rolloverCount;
-  state.currentJobId = `${state.token}:successor:${chat.chainId}:${rolloverCount}:${Date.now()}`;
-  state.pendingSuccessor = {
-    parentChat: { ...chat },
+  chat.currentJobId = `${state.token}:successor:${chat.chainId}:${rolloverCount}:${Date.now()}`;
+  chat.pendingSuccessor = {
+    parentChat: { ...chat, pendingSuccessor: null },
     checkpoint,
     reason,
     prompt: buildSuccessorPrompt(chatSettings, chat, checkpoint, reason),
     settings: chatSettings
   };
-  state.status = `Creating successor for ${chat.title}`;
+  updateOverallStatus(state, `Creating successor for ${chat.title}`);
   await saveState(state);
   await notify(state, `Creating successor: ${chat.title}`, `${reason} · checkpoint ${checkpoint}`, `rollover-${chat.id}`);
 
-  let tab;
-  try { tab = await chrome.tabs.get(state.workerTabId); } catch { tab = null; }
+  let tab = null;
+  if (Number.isInteger(chat.workerTabId)) {
+    try { tab = await chrome.tabs.get(chat.workerTabId); } catch { tab = null; }
+  }
   if (!tab) {
     try {
       tab = await chrome.tabs.create({ url: "about:blank", active: false });
-      state.workerTabId = tab.id;
+      chat.workerTabId = tab.id;
       await saveState(state);
     } catch (error) {
-      return stopScheduler("Stopped", `Could not create a successor tab: ${error.message}`, true, true);
+      return failChatWorker(state, index, `Could not create a successor tab: ${error.message}`, false);
     }
   }
   try {
-    await chrome.tabs.update(state.workerTabId, { url: NEW_CHAT_URL, active: false });
+    await chrome.tabs.update(chat.workerTabId, { url: NEW_CHAT_URL, active: false });
   } catch (error) {
-    return stopScheduler("Stopped", `Could not open a new ChatGPT conversation: ${error.message}`, true, true);
+    return failChatWorker(state, index, `Could not open a new ChatGPT conversation: ${error.message}`);
   }
   return publicState(state);
 }
 
 async function interruptJob(message, sender) {
   const state = await loadState();
-  if (!state?.running || sender.tab?.id !== state.workerTabId) return publicState(state);
-  if (message.token !== state.token || message.jobId !== state.currentJobId) return publicState(state);
-  const chat = state.chats[state.currentIndex];
-  if (!chat) return publicState(state);
+  const index = findChatIndexForMessage(state, message, sender);
+  if (index < 0) return publicState(state);
+  const chat = state.chats[index];
 
   if (message.checkpoint) chat.lastCheckpoint = String(message.checkpoint).slice(0, 200);
   if (Number.isFinite(message.contextEstimateTokens)) chat.contextEstimateTokens = Math.round(message.contextEstimateTokens);
@@ -616,28 +702,32 @@ async function interruptJob(message, sender) {
   const reason = String(message.message || "ChatGPT interrupted the job.").slice(0, 500);
 
   if (["context_limit", "stalled", "content_removed"].includes(kind)) {
-    return beginSuccessor(state, chat, { ...message, reason });
+    return beginSuccessor(state, index, { ...message, reason });
   }
 
-  // Do not use a new chat to evade account restrictions, rate limits, or safety decisions.
+  // A restriction in any managed tab stops the entire concurrent run unless the
+  // user has disabled heuristic circuit-breaker detection in settings.
   if (["rate_limit", "account_restriction", "safety_restriction"].includes(kind)) {
-    return stopScheduler("Circuit breaker activated", reason, true, true);
+    return stopScheduler("Circuit breaker activated", `${chat.title}: ${reason}`, true, true);
   }
 
-  return stopScheduler("Manual review required", reason, true, true);
+  return failChatWorker(state, index, `Manual review required: ${reason}`);
 }
 
 async function successorCreated(message, sender) {
   const state = await loadState();
-  if (!state?.running || sender.tab?.id !== state.workerTabId || !state.pendingSuccessor) return publicState(state);
-  if (message.token !== state.token || message.jobId !== state.currentJobId) return publicState(state);
+  const index = findChatIndexForMessage(state, message, sender);
+  if (index < 0) return publicState(state);
+  const current = state.chats[index];
+  if (!current.pendingSuccessor) return publicState(state);
 
   const info = normalizeConversationUrl(message.conversation?.url || "");
   if (!info || info.id !== message.conversation?.id) {
-    return stopScheduler("Successor creation failed", "The new ChatGPT conversation URL could not be verified.", true, true);
+    return failChatWorker(state, index, "The new ChatGPT conversation URL could not be verified.");
   }
 
-  const parent = state.pendingSuccessor.parentChat;
+  const pending = current.pendingSuccessor;
+  const parent = pending.parentChat;
   const successor = {
     ...parent,
     id: info.id,
@@ -650,9 +740,13 @@ async function successorCreated(message, sender) {
     retired: false,
     generation: Number(parent.generation || 0) + 1,
     rolloverCount: Number(parent.rolloverCount || 0),
-    lastCheckpoint: String(message.checkpoint || state.pendingSuccessor.checkpoint || "").slice(0, 200),
+    lastCheckpoint: String(message.checkpoint || pending.checkpoint || "").slice(0, 200),
     contextEstimateTokens: Number(message.contextEstimateTokens || 0),
-    contextPercent: Number(message.contextPercent || 0)
+    contextPercent: Number(message.contextPercent || 0),
+    workerTabId: current.workerTabId,
+    currentJobId: null,
+    pendingSuccessor: null,
+    settings: current.settings || parent.settings || state.settings
   };
 
   state.handoffHistory = [...(state.handoffHistory || []), {
@@ -660,18 +754,25 @@ async function successorCreated(message, sender) {
     title: parent.title,
     url: parent.url,
     successorId: successor.id,
-    checkpoint: state.pendingSuccessor.checkpoint,
-    reason: state.pendingSuccessor.reason,
+    checkpoint: pending.checkpoint,
+    reason: pending.reason,
     at: Date.now()
   }].slice(-50);
-  state.chats[state.currentIndex] = successor;
-  state.pendingSuccessor = null;
-  state.currentJobId = null;
-  state.status = `Successor created for ${parent.title}`;
+  state.chats[index] = successor;
+  updateOverallStatus(state, `Successor created for ${parent.title}`);
   await saveState(state);
   await saveSuccessorToCatalog(successor, parent.id);
   await notify(state, "Successor chat ready", `${successor.title} · checkpoint ${successor.lastCheckpoint}`, `successor-${successor.id}`);
-  return advanceScheduler(state);
+
+  if (!isChatEligible(state, successor)) {
+    const tabId = successor.workerTabId;
+    successor.workerTabId = null;
+    successor.status = "Finished";
+    await saveState(state);
+    await removeManagedTab(tabId);
+    return maybeFinishScheduler(state);
+  }
+  return queueNextChatJob(state, index);
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -687,7 +788,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return stopScheduler("Stopped by user", "", true);
       case "CONTENT_READY": {
         const state = await loadState();
-        if (state?.running && sender.tab?.id === state.workerTabId) await sendCurrentJob(state);
+        const index = findChatIndexByTab(state, sender.tab?.id);
+        if (state?.running && index >= 0) await sendChatJob(state, index);
         return publicState(state);
       }
       case "JOB_STATUS":
@@ -715,8 +817,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.tabs.onRemoved.addListener(tabId => {
   enqueue(async () => {
     const state = await loadState();
-    if (state?.running && state.workerTabId === tabId) {
-      await stopScheduler("Stopped", "The managed ChatGPT tab was closed.", false, true);
+    const index = findChatIndexByTab(state, tabId);
+    if (state?.running && index >= 0) {
+      state.chats[index].workerTabId = null;
+      await failChatWorker(state, index, "The managed ChatGPT tab was closed.", false);
     }
   }).catch(() => {});
 });
@@ -725,13 +829,15 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status !== "complete") return;
   enqueue(async () => {
     const state = await loadState();
-    if (state?.running && state.workerTabId === tabId) await sendCurrentJob(state);
+    const index = findChatIndexByTab(state, tabId);
+    if (state?.running && index >= 0) await sendChatJob(state, index);
   }).catch(() => {});
 });
 
 if (typeof module !== "undefined") {
   module.exports = {
     DEFAULTS,
+    MAX_CONCURRENT_CHATS,
     normalizeSettings,
     normalizeRepository,
     normalizeHandoffFile,
@@ -739,6 +845,8 @@ if (typeof module !== "undefined") {
     isNewChatUrl,
     normalizeChat,
     nextEligibleIndex,
+    eligibleChatIndexes,
+    isChatEligible,
     buildSuccessorPrompt
   };
 }
