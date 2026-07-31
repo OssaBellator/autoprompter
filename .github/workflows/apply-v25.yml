@@ -1,0 +1,51 @@
+name: Apply AutoPrompter 2.5
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'agent/fresh-start-recency-progress'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fresh-start-recency-progress
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Reconstruct and verify patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .release-v25/part-* | tr -d '\n' | base64 -d | gzip -d > /tmp/autoprompter-v25.patch
+          echo "3421d2636c391fcb07fb60c7384e7b9e9016d20008409ef0685c8774d5d722b4  /tmp/autoprompter-v25.patch" | sha256sum -c -
+          git apply --check /tmp/autoprompter-v25.patch
+          git apply /tmp/autoprompter-v25.patch
+      - name: Validate release
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm test
+          npm run check
+          python -m json.tool manifest.json >/dev/null
+          python -m json.tool package.json >/dev/null
+          test "$(git hash-object background.js)" = "a3d61ce9b6b6bf076d9f6d01e3a9292b92b20a2d"
+          test "$(git hash-object content.js)" = "6b9033cfbf514bda7d03e018230b6321dcae54f3"
+          test "$(git hash-object popup.js)" = "e131b5c3feb1fed2156c0fe115b9aa6b2628cd5f"
+          test "$(git hash-object manifest.json)" = "f02a16ac1658da52b550753eff47761011b638e7"
+      - name: Commit validated release
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .release-v25 .github/workflows/apply-v25.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Release AutoPrompter 2.5 with legacy fresh starts"
+          git push origin HEAD:agent/fresh-start-recency-progress
