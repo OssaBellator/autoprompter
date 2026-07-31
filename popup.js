@@ -33,7 +33,11 @@ const elements = Object.fromEntries([
   "chatList", "catalogHint", "selectionSummary", "start", "initializeContinuity", "stop", "statusDot",
   "statusText", "statusDetail", "chatConfigPanel", "chatConfigChat", "chatPrompt", "chatContinuityMode",
   "chatRepository", "chatHandoffFile", "chatPluginInstruction", "saveChatConfig", "clearChatConfig",
-  "selectionControls", "progressPanel", "progressSummary", "progressList"
+  "selectionControls", "progressPanel", "progressSummary", "progressList",
+  "projectModePanel", "projectSelect", "inspectProject", "projectStatusCard", "projectStatusTitle",
+  "projectStatusBadge", "projectStatusMeta", "projectInspectOutput", "pauseProject", "resumeProject",
+  "cancelProject", "projectTitle", "projectGoal", "projectRepository", "projectPlannerChat",
+  "projectReviewerChat", "projectIntegratorChat", "projectWorkerHint", "createProject", "projectMessage"
 ].map(id => [id, document.getElementById(id)]));
 
 let catalog = [];
@@ -45,6 +49,7 @@ let activeChatEditorId = "";
 let loadingChatEditor = false;
 let chatConfigPersistTimer = null;
 let wasRunning = false;
+let projectState = { projects: [], activeProjectId: null, project: null, events: [] };
 
 function isChatGptUrl(value = "") {
   try {
@@ -108,6 +113,147 @@ function visibleCatalog() {
   const query = elements.filter.value.trim().toLowerCase();
   if (!query) return catalog;
   return catalog.filter(chat => chat.title.toLowerCase().includes(query));
+}
+
+function projectRoleSelects() {
+  return [elements.projectPlannerChat, elements.projectReviewerChat, elements.projectIntegratorChat];
+}
+
+function refreshProjectRoleOptions() {
+  for (const select of projectRoleSelects()) {
+    const previous = select.value;
+    select.textContent = "";
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "Unassigned";
+    select.append(blank);
+    for (const chat of catalog) {
+      const option = document.createElement("option");
+      option.value = chat.id;
+      option.textContent = chat.title;
+      select.append(option);
+    }
+    if ([...select.options].some(option => option.value === previous)) select.value = previous;
+  }
+  updateProjectWorkerHint();
+}
+
+function projectRoleIds() {
+  return new Set(projectRoleSelects().map(select => select.value).filter(Boolean));
+}
+
+function projectWorkerIds() {
+  const fixedRoles = projectRoleIds();
+  return catalog.filter(chat => selectedIds.has(chat.id) && !fixedRoles.has(chat.id)).map(chat => chat.id);
+}
+
+function updateProjectWorkerHint() {
+  if (!elements.projectWorkerHint) return;
+  const count = projectWorkerIds().length;
+  elements.projectWorkerHint.textContent = `${count} selected chat${count === 1 ? "" : "s"} will be stored as workers. Fixed-role chats are excluded automatically.`;
+}
+
+function renderProjectState() {
+  const projects = Array.isArray(projectState.projects) ? projectState.projects : [];
+  const previous = elements.projectSelect.value || projectState.activeProjectId || "";
+  elements.projectSelect.textContent = "";
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = projects.length ? "Choose a project" : "No projects yet";
+  elements.projectSelect.append(blank);
+  for (const project of projects) {
+    const option = document.createElement("option");
+    option.value = project.projectId;
+    option.textContent = `${project.title} · ${project.status}`;
+    elements.projectSelect.append(option);
+  }
+  if ([...elements.projectSelect.options].some(option => option.value === previous)) elements.projectSelect.value = previous;
+
+  const project = projectState.project;
+  elements.projectStatusCard.hidden = !project;
+  elements.inspectProject.disabled = !elements.projectSelect.value;
+  if (!project) {
+    elements.pauseProject.disabled = true;
+    elements.resumeProject.disabled = true;
+    elements.cancelProject.disabled = true;
+    return;
+  }
+  elements.projectStatusTitle.textContent = project.title;
+  elements.projectStatusBadge.textContent = project.status;
+  elements.projectStatusMeta.textContent = `${project.projectId} · ${project.repository.slug} · ${project.roles.workerChatIds.length} worker chat${project.roles.workerChatIds.length === 1 ? "" : "s"}`;
+  elements.projectInspectOutput.textContent = JSON.stringify({
+    goal: project.goal,
+    roles: project.roles,
+    scheduler: project.scheduler,
+    recentEvents: (projectState.events || []).slice(-5)
+  }, null, 2);
+  elements.pauseProject.disabled = !["draft", "planning", "ready", "running"].includes(project.status);
+  elements.resumeProject.disabled = project.status !== "paused";
+  elements.cancelProject.disabled = ["completed", "failed", "cancelled"].includes(project.status);
+}
+
+async function refreshProjects({ inspectActive = true } = {}) {
+  const response = await runtimeMessage("GET_PROJECTS");
+  if (response.ok === false) throw new Error(response.error || "Could not load projects.");
+  projectState.projects = response.projects || [];
+  projectState.activeProjectId = response.activeProjectId || null;
+  if (inspectActive && projectState.activeProjectId) await inspectProject(projectState.activeProjectId);
+  else {
+    projectState.project = null;
+    projectState.events = [];
+    renderProjectState();
+  }
+}
+
+async function inspectProject(projectId = elements.projectSelect.value) {
+  if (!projectId) {
+    projectState.project = null;
+    projectState.events = [];
+    renderProjectState();
+    return;
+  }
+  const response = await runtimeMessage("INSPECT_PROJECT", { projectId });
+  if (response.ok === false) throw new Error(response.error || "Could not inspect project.");
+  projectState.activeProjectId = response.activeProjectId || projectId;
+  projectState.project = response.project;
+  projectState.events = response.events || [];
+  renderProjectState();
+}
+
+async function createProjectDraft() {
+  elements.projectMessage.textContent = "";
+  const response = await runtimeMessage("CREATE_PROJECT", {
+    project: {
+      title: elements.projectTitle.value.trim(),
+      goal: elements.projectGoal.value.trim(),
+      repository: elements.projectRepository.value.trim() || elements.repository.value.trim(),
+      plannerChatId: elements.projectPlannerChat.value || null,
+      reviewerChatId: elements.projectReviewerChat.value || null,
+      integratorChatId: elements.projectIntegratorChat.value || null,
+      workerChatIds: projectWorkerIds(),
+      circuitBreakerEnabled: !elements.disableCircuitBreaker.checked
+    }
+  });
+  if (response.ok === false) throw new Error(response.error || "Could not create project.");
+  projectState.projects = response.projects || [];
+  projectState.activeProjectId = response.activeProjectId;
+  projectState.project = response.project;
+  projectState.events = [];
+  elements.projectSelect.value = response.project.projectId;
+  elements.projectMessage.textContent = `Created ${response.project.projectId}. No chats were dispatched.`;
+  await inspectProject(response.project.projectId);
+}
+
+async function transitionProject(type) {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) return;
+  const response = await runtimeMessage(type, { projectId });
+  if (response.ok === false) throw new Error(response.error || "Project transition failed.");
+  projectState.projects = response.projects || projectState.projects;
+  projectState.project = response.project;
+  projectState.activeProjectId = response.activeProjectId || projectId;
+  elements.projectMessage.textContent = `${response.project.title} is now ${response.project.status}.`;
+  await inspectProject(projectId);
 }
 
 function configFor(chatId) {
@@ -313,6 +459,7 @@ function renderCatalog() {
   elements.selectAll.disabled = running;
   elements.selectNone.disabled = running;
   refreshChatEditorOptions();
+  refreshProjectRoleOptions();
   updateFieldAvailability();
 }
 
@@ -418,6 +565,7 @@ async function initialize() {
   chatConfigs = stored[CHAT_CONFIGS_KEY] && typeof stored[CHAT_CONFIGS_KEY] === "object" ? stored[CHAT_CONFIGS_KEY] : {};
   renderCatalog();
   await refreshState();
+  await refreshProjects();
 }
 
 elements.refresh.addEventListener("click", () => refreshCatalog().catch(error => renderStatus({ ok: false, error: error.message })));
@@ -436,6 +584,13 @@ elements.clearChatConfig.addEventListener("click", () => clearChatEditor().catch
 elements.continuityEnabled.addEventListener("change", () => { elements.continuityPanel.open = elements.continuityEnabled.checked; updateFieldAvailability(); saveSettings().catch(() => {}); });
 elements.notificationsEnabled.addEventListener("change", () => { updateFieldAvailability(); saveSettings().catch(() => {}); });
 elements.disableCircuitBreaker.addEventListener("change", () => saveSettings().catch(() => {}));
+elements.createProject.addEventListener("click", () => createProjectDraft().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.inspectProject.addEventListener("click", () => inspectProject().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.projectSelect.addEventListener("change", () => inspectProject().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.pauseProject.addEventListener("click", () => transitionProject("PAUSE_PROJECT").catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.resumeProject.addEventListener("click", () => transitionProject("RESUME_PROJECT").catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.cancelProject.addEventListener("click", () => transitionProject("CANCEL_PROJECT").catch(error => { elements.projectMessage.textContent = error.message; }));
+for (const select of projectRoleSelects()) select.addEventListener("change", updateProjectWorkerHint);
 for (const input of [elements.prompt, elements.delaySeconds, elements.maxContinuations, elements.notifyOnPromptDone, elements.repository, elements.handoffFile, elements.pluginInstruction, elements.contextCapacityTokens, elements.contextThresholdPercent, elements.stallMinutes, elements.maxRollovers, elements.checkpointBeforePrompt, elements.checkpointAfterPrompt]) input.addEventListener("change", () => saveSettings().catch(() => {}));
 for (const input of [elements.chatPrompt, elements.chatContinuityMode, elements.chatRepository, elements.chatHandoffFile, elements.chatPluginInstruction]) {
   input.addEventListener(input.tagName === "SELECT" ? "change" : "input", () => captureChatEditor());

@@ -103,6 +103,66 @@
       </div>
     </details>
 
+    <details id="projectModePanel" class="continuity project-mode">
+      <summary>Project Mode preview</summary>
+      <div class="details-body">
+        <p class="hint">Create and inspect durable multi-agent project state. This preview does not dispatch planner, worker, reviewer, or integrator chats.</p>
+
+        <div class="project-toolbar">
+          <label>
+            Saved project
+            <select id="projectSelect">
+              <option value="">No projects yet</option>
+            </select>
+          </label>
+          <button id="inspectProject" class="compact" type="button">Inspect</button>
+        </div>
+
+        <div id="projectStatusCard" class="project-status-card" hidden>
+          <strong id="projectStatusTitle"></strong>
+          <span id="projectStatusBadge" class="project-status-badge"></span>
+          <small id="projectStatusMeta"></small>
+          <pre id="projectInspectOutput"></pre>
+          <div class="inline-actions">
+            <button id="pauseProject" class="compact" type="button">Pause</button>
+            <button id="resumeProject" class="compact" type="button">Resume</button>
+            <button id="cancelProject" class="compact" type="button">Cancel</button>
+          </div>
+        </div>
+
+        <label>
+          Project title
+          <input id="projectTitle" type="text" maxlength="160" placeholder="AutoPrompter Project Mode">
+        </label>
+        <label>
+          Project goal
+          <textarea id="projectGoal" rows="4" maxlength="12000" placeholder="Describe the durable project outcome"></textarea>
+        </label>
+        <label>
+          GitHub repository
+          <input id="projectRepository" type="text" placeholder="owner/repository">
+        </label>
+
+        <div class="grid">
+          <label>
+            Planner chat
+            <select id="projectPlannerChat"></select>
+          </label>
+          <label>
+            Reviewer chat
+            <select id="projectReviewerChat"></select>
+          </label>
+        </div>
+        <label>
+          Integrator chat
+          <select id="projectIntegratorChat"></select>
+        </label>
+        <p id="projectWorkerHint" class="hint">Currently selected chats become the worker pool, excluding chats assigned to fixed roles.</p>
+        <button id="createProject" class="primary project-create" type="button">Create project draft</button>
+        <p id="projectMessage" class="hint" aria-live="polite"></p>
+      </div>
+    </details>
+
     <section class="picker">
       <div class="picker-heading">
         <div>

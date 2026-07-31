@@ -191,10 +191,13 @@ See `SECURITY_MODEL.md` for the initial threat model.
 
 ### Milestone 2 — extension-local project store
 
-- Add Project Mode state to `chrome.storage.local`.
-- Add migrations keyed by `schemaVersion`.
-- Add create, pause, resume, cancel, and inspect operations.
-- Add a project progress UI without dispatching agents yet.
+Implementation status: complete on the Project Mode development branch.
+
+- Project Mode state is stored under a dedicated `chrome.storage.local` key.
+- Store migrations are keyed by `schemaVersion`, including migration from the initial `0.1` array format.
+- Create, pause, resume, cancel, list, and inspect operations are serialized through the service worker.
+- The popup exposes a project draft form, fixed-role selectors, selected-chat worker pool, audit-aware inspector, and lifecycle controls.
+- No planner or worker prompt is dispatched by this milestone.
 
 ### Milestone 3 — planner parsing
 

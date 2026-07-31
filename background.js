@@ -1,5 +1,8 @@
 "use strict";
 
+if (typeof importScripts === "function") importScripts("project-store.js");
+const ProjectStore = globalThis.AutoPrompterProjectStore || (typeof require === "function" ? require("./project-store.js") : null);
+
 const MESSAGE_SCOPE = "AUTOPROMPTER_RUNTIME";
 const SESSION_KEY = "autoprompterScheduler";
 const SETTINGS_KEY = "autoprompterSettings";
@@ -289,6 +292,66 @@ async function saveState(state) {
   await chrome.storage.session.set({
     [SESSION_KEY]: { ...state, savedAt: Date.now() }
   });
+}
+
+async function loadProjectStore() {
+  if (!ProjectStore) throw new Error("Project Mode store is unavailable.");
+  const stored = await chrome.storage.local.get(ProjectStore.PROJECTS_KEY);
+  const migrated = ProjectStore.migrateStore(stored?.[ProjectStore.PROJECTS_KEY]);
+  if (migrated.migrated) await saveProjectStore(migrated.store);
+  return migrated.store;
+}
+
+async function saveProjectStore(store) {
+  await chrome.storage.local.set({ [ProjectStore.PROJECTS_KEY]: store });
+}
+
+async function listProjectState() {
+  const store = await loadProjectStore();
+  return {
+    projectStoreVersion: store.schemaVersion,
+    activeProjectId: store.activeProjectId,
+    projects: ProjectStore.listProjects(store)
+  };
+}
+
+async function createProjectState(input) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.createProject(store, input);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project
+  };
+}
+
+async function inspectProjectState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.inspectProject(store, projectId);
+  if (result.store.activeProjectId !== result.project.projectId) {
+    result.store.activeProjectId = result.project.projectId;
+    await saveProjectStore(result.store);
+  }
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    project: result.project,
+    events: result.events
+  };
+}
+
+async function transitionProjectState(projectId, action) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.transitionProject(store, projectId, action);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project
+  };
 }
 
 async function notify(state, title, message, idSuffix = "event") {
@@ -1027,6 +1090,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return startScheduler(message.chats, message.settings, message.mode);
       case "STOP_SCHEDULER":
         return stopScheduler("Stopped by user", "", true);
+      case "GET_PROJECTS":
+        return listProjectState();
+      case "CREATE_PROJECT":
+        return createProjectState(message.project);
+      case "INSPECT_PROJECT":
+        return inspectProjectState(message.projectId);
+      case "PAUSE_PROJECT":
+        return transitionProjectState(message.projectId, "pause");
+      case "RESUME_PROJECT":
+        return transitionProjectState(message.projectId, "resume");
+      case "CANCEL_PROJECT":
+        return transitionProjectState(message.projectId, "cancel");
       case "CONTENT_READY": {
         const state = await loadState();
         const index = findChatIndexByTab(state, sender.tab?.id);
@@ -1096,6 +1171,7 @@ if (typeof module !== "undefined") {
     buildFreshStartPrompt,
     CONNECTION_RETRY_PROMPT,
     MAX_CONNECTION_RETRIES,
-    INITIAL_BATCH_GRACE_MS
+    INITIAL_BATCH_GRACE_MS,
+    ProjectStore
   };
 }

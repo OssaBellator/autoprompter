@@ -29,3 +29,15 @@ test("chat discovery preserves sidebar order instead of alphabetizing", () => {
   assert.doesNotMatch(popupJs, /catalog\s*=\s*\[\.\.\.byId\.values\(\)\]\.sort/);
   assert.match(popupJs, /observed\.map\(\(chat, index\)/);
 });
+
+
+test("Project Mode preview exposes non-dispatching lifecycle controls", () => {
+  assert.match(popupHtml, /id="projectModePanel"/);
+  assert.match(popupHtml, /id="createProject"/);
+  assert.match(popupHtml, /This preview does not dispatch planner, worker, reviewer, or integrator chats/);
+  assert.match(popupJs, /runtimeMessage\("CREATE_PROJECT"/);
+  assert.match(popupJs, /runtimeMessage\("INSPECT_PROJECT"/);
+  assert.match(popupJs, /transitionProject\("PAUSE_PROJECT"\)/);
+  assert.match(popupJs, /transitionProject\("RESUME_PROJECT"\)/);
+  assert.match(popupJs, /transitionProject\("CANCEL_PROJECT"\)/);
+});

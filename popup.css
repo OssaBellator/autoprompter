@@ -82,3 +82,13 @@ select { width: 100%; margin-top: 6px; padding: 8px; border: 1px solid color-mix
 .progress-meta { display: block; margin-top: 2px; color: GrayText; font-size: 10px; }
 .progress-value { color: GrayText; font-size: 11px; text-align: right; white-space: nowrap; }
 .progress-value.error { color: #d93025; }
+
+.project-mode { margin-top: 16px; }
+.project-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; margin-top: 10px; }
+.project-toolbar button { margin-bottom: 1px; }
+.project-status-card { margin-top: 10px; padding: 10px; border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius: 8px; background: color-mix(in srgb, CanvasText 4%, transparent); }
+.project-status-card strong, .project-status-card small { display: block; }
+.project-status-card small { margin-top: 3px; color: GrayText; }
+.project-status-card pre { max-height: 150px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 9px 0 0; padding: 8px; border-radius: 6px; background: color-mix(in srgb, CanvasText 6%, transparent); font-size: 10px; line-height: 1.35; }
+.project-status-badge { display: inline-block; margin-top: 5px; padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, #0f766e 16%, transparent); color: #0f766e; font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .03em; }
+.project-create { width: 100%; margin-top: 12px; }
