@@ -21,9 +21,18 @@ jobs:
           node-version: 20
       - name: Reconstruct and verify patch
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          cat .release-v25/part-* | tr -d '\n' | base64 -d | gzip -d > /tmp/autoprompter-v25.patch
+          curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/git/blobs/0c4a26875c71c6c5a60db10c4c72f087a9679802" \
+            | python -c 'import base64,json,sys; data=json.load(sys.stdin); sys.stdout.buffer.write(base64.b64decode(data["content"]))' \
+            > /tmp/autoprompter-v25.patch.gz
+          echo "636932a5b4f649fa75b2619d7493bf7bd7581ed85f86a5b18315eebbd491eb2e  /tmp/autoprompter-v25.patch.gz" | sha256sum -c -
+          gzip -dc /tmp/autoprompter-v25.patch.gz > /tmp/autoprompter-v25.patch
           echo "3421d2636c391fcb07fb60c7384e7b9e9016d20008409ef0685c8774d5d722b4  /tmp/autoprompter-v25.patch" | sha256sum -c -
           git apply --check /tmp/autoprompter-v25.patch
           git apply /tmp/autoprompter-v25.patch
@@ -43,7 +52,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf .release-v25 .github/workflows/apply-v25.yml
+          rm -rf .release-v25 .github/workflows/apply-v25.yml .github/v25.ready
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
