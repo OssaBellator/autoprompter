@@ -1,6 +1,8 @@
 # AutoPrompter for ChatGPT
 
-Current release: **2.6.0**
+Current release: **2.7.0**
+
+- Detects ChatGPT’s current maximum-length notice and opens a best-effort successor even when no repository checkpoint exists.
 
 AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that runs selected ChatGPT conversations concurrently using one inactive managed tab per chat. Each chat independently queues its next follow-up as soon as its current response completes. It can notify you when work prompts complete and, when explicitly configured, create successor chats from verified Git repository checkpoints.
 
@@ -97,7 +99,7 @@ ChatGPT does not expose a stable browser API for exact per-conversation context 
 
 AutoPrompter classifies visible interruption messages conservatively:
 
-- **Context limit:** use a verified repository handoff when possible. If the context-limit message arrives before a checkpoint can be created, open a best-effort fresh chat using the selected chat title, configured work prompt, and any repository details. The extension explicitly tells the new chat that it cannot see the old transcript.
+- **Context limit:** use a verified repository handoff when possible. The detector includes `You’ve reached the maximum length for this conversation, but you can keep talking by starting a new chat.` If the context-limit message arrives before a checkpoint can be created, open a best-effort fresh chat using the selected chat title, configured work prompt, and any repository details. The extension explicitly tells the new chat that it cannot see the old transcript.
 - **Connection interrupted:** stop the interrupted generation when a stop control is available, then queue a same-chat continuation prompt without incrementing completed-work progress. Retries are capped at three consecutive attempts.
 - **Prolonged stall or content removal:** require a verified checkpoint before rollover. Stuck-generation labels—`Thinking…`, `Generating…`, and `Working…`—must persist for the configured stall timeout before rollover.
 - **Suspicious activity, rate limit, temporary account restriction, or safety block:** stop the whole scheduler and notify the user. Documented restriction variants include `We detect suspicious activity.`, `Unusual Activity Detected`, `Unusual activity has been detected from your device. Try again later`, and `Sorry, you have been blocked`.

@@ -171,3 +171,20 @@ test("connection interruption is classified as a recoverable interruption", () =
     "connection_interrupted"
   );
 });
+
+test("current maximum-length wording triggers context rollover", () => {
+  const exact = "You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.";
+  assert.equal(classifyGuardrailText(exact, "notice").kind, "context_limit");
+  assert.equal(
+    classifyGuardrailText("You’ve reached the maximum length for this conversation, but you can keep talking by starting a new chat.", "notice").kind,
+    "context_limit"
+  );
+  assert.equal(
+    classifyGuardrailText(`Partial answer before the limit. ${exact}`, "assistant").kind,
+    "context_limit"
+  );
+  assert.equal(
+    classifyGuardrailText("The documentation quotes a maximum-length warning for testing.", "assistant"),
+    null
+  );
+});

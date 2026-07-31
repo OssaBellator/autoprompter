@@ -18,7 +18,7 @@ function clone(value) {
 
 global.chrome = {
   runtime: {
-    getManifest: () => ({ version: "2.6.0" }),
+    getManifest: () => ({ version: "2.7.0" }),
     onMessage: { addListener(listener) { runtimeListener = listener; } }
   },
   storage: {
@@ -190,7 +190,7 @@ test("an unverified context-limit interruption opens a best-effort successor", a
     token: before.token,
     jobId: chat.currentJobId,
     kind: "context_limit",
-    message: "This conversation is too long."
+    message: "You've reached the maximum length for this conversation, but you can keep talking by starting a new chat."
   }, { tab: { id: chat.workerTabId } });
   const state = clone(sessionStore.autoprompterScheduler);
   assert.equal(state.running, true);
