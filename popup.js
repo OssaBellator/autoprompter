@@ -39,7 +39,9 @@ const elements = Object.fromEntries([
   "cancelProject", "projectTitle", "projectGoal", "projectRepository", "projectPlannerChat",
   "projectReviewerChat", "projectIntegratorChat", "projectWorkerHint", "createProject", "projectMessage",
   "plannerWorkbench", "buildPlannerPrompt", "plannerPromptOutput", "plannerResponseInput",
-  "validatePlannerOutput", "approveProjectPlan", "discardProjectPlan", "plannerPlanSummary"
+  "validatePlannerOutput", "approveProjectPlan", "discardProjectPlan", "plannerPlanSummary",
+  "workerWorkbench", "startProjectMode", "prepareProjectAssignments", "recoverProjectLeases",
+  "projectWorkerState", "projectDispatchSelect", "projectDispatchPrompt"
 ].map(id => [id, document.getElementById(id)]));
 
 let catalog = [];
@@ -53,7 +55,8 @@ let chatConfigPersistTimer = null;
 let wasRunning = false;
 let projectState = {
   projects: [], activeProjectId: null, project: null, events: [],
-  pendingPlan: null, approvedPlan: null, tasks: {}, plannerPromptProjectId: ""
+  pendingPlan: null, approvedPlan: null, tasks: {}, dispatches: {}, runtimeSummary: null,
+  plannerPromptProjectId: ""
 };
 
 function isChatGptUrl(value = "") {
@@ -158,6 +161,61 @@ function updateProjectWorkerHint() {
   elements.projectWorkerHint.textContent = `${count} selected chat${count === 1 ? "" : "s"} will be stored as workers. Fixed-role chats are excluded automatically.`;
 }
 
+function renderProjectWorkerState(project, tasks, dispatches, runtimeSummary) {
+  elements.projectWorkerState.textContent = "";
+  const activeByWorker = new Map(
+    Object.values(dispatches).filter(dispatch => ["prepared", "dispatched", "running"].includes(dispatch.status))
+      .map(dispatch => [dispatch.workerChatId, dispatch])
+  );
+  for (const workerChatId of project.roles.workerChatIds) {
+    const row = document.createElement("div");
+    row.className = "project-worker-row";
+    const name = document.createElement("span");
+    name.textContent = workerChatId;
+    const state = document.createElement("small");
+    const dispatch = activeByWorker.get(workerChatId);
+    state.textContent = dispatch ? `${dispatch.taskId} · ${dispatch.status}` : "available";
+    row.append(name, state);
+    elements.projectWorkerState.append(row);
+  }
+  for (const task of Object.values(tasks)) {
+    const row = document.createElement("div");
+    row.className = "project-task-row";
+    const name = document.createElement("span");
+    name.textContent = `${task.id} · ${task.title}`;
+    const state = document.createElement("small");
+    state.textContent = task.lease ? `${task.status} · ${task.lease.workerChatId}` : task.status;
+    row.append(name, state);
+    elements.projectWorkerState.append(row);
+  }
+  if (!project.roles.workerChatIds.length && !Object.keys(tasks).length) {
+    const empty = document.createElement("small");
+    empty.textContent = "No workers or task records yet.";
+    elements.projectWorkerState.append(empty);
+  }
+
+  const previousDispatch = elements.projectDispatchSelect.value;
+  elements.projectDispatchSelect.textContent = "";
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = Object.keys(dispatches).length ? "Choose a prepared assignment" : "No prepared assignments";
+  elements.projectDispatchSelect.append(blank);
+  for (const dispatch of Object.values(dispatches).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))) {
+    const option = document.createElement("option");
+    option.value = dispatch.dispatchId;
+    option.textContent = `${dispatch.taskId} → ${dispatch.workerChatId} · ${dispatch.status}`;
+    elements.projectDispatchSelect.append(option);
+  }
+  if ([...elements.projectDispatchSelect.options].some(option => option.value === previousDispatch)) {
+    elements.projectDispatchSelect.value = previousDispatch;
+  }
+  const selected = dispatches[elements.projectDispatchSelect.value];
+  elements.projectDispatchPrompt.value = selected?.prompt || "";
+  elements.projectDispatchPrompt.placeholder = runtimeSummary?.activeLeaseCount
+    ? "Choose a prepared assignment to inspect its local prompt"
+    : "Prepared worker prompts remain local until a later dispatch milestone";
+}
+
 function renderProjectState() {
   const projects = Array.isArray(projectState.projects) ? projectState.projects : [];
   const previous = elements.projectSelect.value || projectState.activeProjectId || "";
@@ -182,9 +240,14 @@ function renderProjectState() {
     elements.resumeProject.disabled = true;
     elements.cancelProject.disabled = true;
     elements.plannerWorkbench.hidden = true;
+    elements.workerWorkbench.hidden = true;
+    elements.projectWorkerState.textContent = "";
+    elements.projectDispatchPrompt.value = "";
     return;
   }
   const tasks = projectState.tasks && typeof projectState.tasks === "object" ? projectState.tasks : {};
+  const dispatches = projectState.dispatches && typeof projectState.dispatches === "object" ? projectState.dispatches : {};
+  const runtimeSummary = projectState.runtimeSummary || null;
   const pendingSummary = projectState.pendingPlan ? {
     revision: projectState.pendingPlan.revision,
     phases: projectState.pendingPlan.phases.length,
@@ -208,6 +271,7 @@ function renderProjectState() {
       counts[task.status] = (counts[task.status] || 0) + 1;
       return counts;
     }, {}),
+    runtime: runtimeSummary,
     recentEvents: (projectState.events || []).slice(-5)
   }, null, 2);
   elements.pauseProject.disabled = !["draft", "planning", "ready", "running"].includes(project.status);
@@ -227,6 +291,12 @@ function renderProjectState() {
     taskRecordsCreated: Object.keys(tasks).length,
     approvalRequiredBeforeTaskCreation: !projectState.approvedPlan
   }, null, 2);
+
+  elements.workerWorkbench.hidden = false;
+  elements.startProjectMode.disabled = project.status !== "ready" || !projectState.approvedPlan || !Object.keys(tasks).length;
+  elements.prepareProjectAssignments.disabled = project.status !== "running" || !Object.values(tasks).some(task => task.status === "ready");
+  elements.recoverProjectLeases.disabled = !Object.values(tasks).some(task => task.lease);
+  renderProjectWorkerState(project, tasks, dispatches, runtimeSummary);
 }
 
 async function refreshProjects({ inspectActive = true } = {}) {
@@ -241,6 +311,8 @@ async function refreshProjects({ inspectActive = true } = {}) {
     projectState.pendingPlan = null;
     projectState.approvedPlan = null;
     projectState.tasks = {};
+    projectState.dispatches = {};
+    projectState.runtimeSummary = null;
     renderProjectState();
   }
 }
@@ -252,6 +324,8 @@ async function inspectProject(projectId = elements.projectSelect.value) {
     projectState.pendingPlan = null;
     projectState.approvedPlan = null;
     projectState.tasks = {};
+    projectState.dispatches = {};
+    projectState.runtimeSummary = null;
     renderProjectState();
     return;
   }
@@ -263,6 +337,8 @@ async function inspectProject(projectId = elements.projectSelect.value) {
   projectState.pendingPlan = response.pendingPlan || null;
   projectState.approvedPlan = response.approvedPlan || null;
   projectState.tasks = response.tasks || {};
+  projectState.dispatches = response.dispatches || {};
+  projectState.runtimeSummary = response.runtimeSummary || null;
   if (projectState.plannerPromptProjectId && projectState.plannerPromptProjectId !== projectId) {
     elements.plannerPromptOutput.value = "";
     projectState.plannerPromptProjectId = "";
@@ -317,6 +393,8 @@ async function validatePlannerResponse() {
   projectState.pendingPlan = response.pendingPlan;
   projectState.approvedPlan = null;
   projectState.tasks = {};
+  projectState.dispatches = {};
+  projectState.runtimeSummary = null;
   elements.projectMessage.textContent = `Plan revision ${response.planSummary.revision} validated with ${response.planSummary.taskCount} tasks. No task records exist until approval.`;
   await inspectProject(projectId);
 }
@@ -331,6 +409,8 @@ async function approvePendingProjectPlan() {
   projectState.pendingPlan = null;
   projectState.approvedPlan = response.approvedPlan;
   projectState.tasks = response.tasks || {};
+  projectState.dispatches = {};
+  projectState.runtimeSummary = null;
   elements.projectMessage.textContent = `Approved revision ${response.planSummary.revision}; ${Object.keys(projectState.tasks).length} task records created. Worker dispatch is still disabled.`;
   await inspectProject(projectId);
 }
@@ -345,7 +425,47 @@ async function discardPendingProjectPlan() {
   projectState.pendingPlan = null;
   projectState.approvedPlan = response.approvedPlan || null;
   projectState.tasks = response.tasks || {};
+  projectState.dispatches = response.dispatches || {};
+  projectState.runtimeSummary = response.runtimeSummary || null;
   elements.projectMessage.textContent = "Pending plan discarded. No task records were created.";
+  await inspectProject(projectId);
+}
+
+async function startProjectModeLocally() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) throw new Error("Choose a project first.");
+  const response = await runtimeMessage("START_PROJECT_MODE", { projectId });
+  if (response.ok === false) throw new Error(response.error || "Could not start Project Mode.");
+  elements.projectMessage.textContent = "Project started locally. No ChatGPT prompt was sent.";
+  await inspectProject(projectId);
+}
+
+async function prepareWorkerAssignments() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) throw new Error("Choose a project first.");
+  const response = await runtimeMessage("PREPARE_PROJECT_ASSIGNMENTS", { projectId });
+  if (response.ok === false) throw new Error(response.error || "Could not prepare worker assignments.");
+  const assignments = response.assignments || [];
+  if (assignments.length) elements.projectDispatchSelect.value = assignments[0].dispatchId;
+  elements.projectMessage.textContent = assignments.length
+    ? `Prepared ${assignments.length} local worker assignment${assignments.length === 1 ? "" : "s"}. No chats were messaged.`
+    : "No new assignments were prepared; active leases or dependencies currently consume the available capacity.";
+  await inspectProject(projectId);
+  if (assignments.length && projectState.dispatches[assignments[0].dispatchId]) {
+    elements.projectDispatchSelect.value = assignments[0].dispatchId;
+    elements.projectDispatchPrompt.value = projectState.dispatches[assignments[0].dispatchId].prompt;
+  }
+}
+
+async function recoverExpiredProjectLeases() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) throw new Error("Choose a project first.");
+  const response = await runtimeMessage("RECOVER_PROJECT_LEASES", { projectId });
+  if (response.ok === false) throw new Error(response.error || "Could not recover project leases.");
+  const count = (response.expiredDispatchIds || []).length;
+  elements.projectMessage.textContent = count
+    ? `Recovered ${count} expired worker lease${count === 1 ? "" : "s"}; eligible tasks returned to the queue.`
+    : "No expired worker leases were found.";
   await inspectProject(projectId);
 }
 
@@ -699,6 +819,12 @@ elements.buildPlannerPrompt.addEventListener("click", () => generatePlannerPromp
 elements.validatePlannerOutput.addEventListener("click", () => validatePlannerResponse().catch(error => { elements.projectMessage.textContent = error.message; }));
 elements.approveProjectPlan.addEventListener("click", () => approvePendingProjectPlan().catch(error => { elements.projectMessage.textContent = error.message; }));
 elements.discardProjectPlan.addEventListener("click", () => discardPendingProjectPlan().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.startProjectMode.addEventListener("click", () => startProjectModeLocally().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.prepareProjectAssignments.addEventListener("click", () => prepareWorkerAssignments().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.recoverProjectLeases.addEventListener("click", () => recoverExpiredProjectLeases().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.projectDispatchSelect.addEventListener("change", () => {
+  elements.projectDispatchPrompt.value = projectState.dispatches[elements.projectDispatchSelect.value]?.prompt || "";
+});
 elements.plannerResponseInput.addEventListener("input", renderProjectState);
 for (const select of projectRoleSelects()) select.addEventListener("change", updateProjectWorkerHint);
 for (const input of [elements.prompt, elements.delaySeconds, elements.maxContinuations, elements.notifyOnPromptDone, elements.repository, elements.handoffFile, elements.pluginInstruction, elements.contextCapacityTokens, elements.contextThresholdPercent, elements.stallMinutes, elements.maxRollovers, elements.checkpointBeforePrompt, elements.checkpointAfterPrompt]) input.addEventListener("change", () => saveSettings().catch(() => {}));

@@ -14,7 +14,11 @@ const {
   buildProjectPlannerPrompt,
   submitProjectPlannerOutput,
   approveProjectPlan,
-  discardProjectPlan
+  discardProjectPlan,
+  startProject,
+  prepareProjectDispatches,
+  recoverProjectLeases,
+  recoverAllProjectLeases
 } = require("../project-store.js");
 const { PLAN_BEGIN, PLAN_END } = require("../planner-protocol.js");
 
@@ -149,7 +153,7 @@ function plannerEnvelope(projectId, overrides = {}) {
   return `${PLAN_BEGIN}\n${JSON.stringify(plannerPlan(projectId, overrides))}\n${PLAN_END}`;
 }
 
-test("migrates the 1.0 project store to planner-capable schema 1.1", () => {
+test("migrates older project stores to lease-capable schema 1.2", () => {
   const created = createProject(emptyStore(), validInput(), fixedClock);
   const migrated = migrateStore({
     schemaVersion: "1.0",
@@ -158,10 +162,11 @@ test("migrates the 1.0 project store to planner-capable schema 1.1", () => {
     resumeStatusByProject: {},
     events: created.store.events
   });
-  assert.equal(migrated.store.schemaVersion, "1.1");
+  assert.equal(migrated.store.schemaVersion, "1.2");
   assert.deepEqual(migrated.store.pendingPlansByProject, {});
   assert.deepEqual(migrated.store.approvedPlansByProject, {});
   assert.deepEqual(migrated.store.tasksByProject, {});
+  assert.deepEqual(migrated.store.dispatchesByProject, {});
 });
 
 test("planner output remains pending until explicit approval creates tasks", () => {
@@ -205,4 +210,149 @@ test("invalid planner output cannot mutate project state", () => {
   );
   assert.equal(created.store.projects[projectId].status, "draft");
   assert.deepEqual(created.store.pendingPlansByProject, {});
+});
+
+
+function approvedProjectStore(overrides = {}) {
+  const created = createProject(emptyStore(), validInput(overrides), fixedClock);
+  const projectId = created.project.projectId;
+  const submitted = submitProjectPlannerOutput(created.store, projectId, plannerEnvelope(projectId), fixedClock);
+  const approved = approveProjectPlan(submitted.store, projectId, fixedClock);
+  return { projectId, ...approved };
+}
+
+test("project start is explicit and does not create a dispatch", () => {
+  const approved = approvedProjectStore();
+  assert.throws(() => prepareProjectDispatches(approved.store, approved.projectId, fixedClock), /Start the ready project/);
+  const started = startProject(approved.store, approved.projectId, fixedClock);
+  assert.equal(started.project.status, "running");
+  assert.deepEqual(started.store.dispatchesByProject, {});
+  assert.equal(started.store.events.at(-1).type, "project_started");
+});
+
+test("prepares bounded idempotent worker leases in deterministic order", () => {
+  const approved = approvedProjectStore({ maxConcurrentWorkers: 2 });
+  const started = startProject(approved.store, approved.projectId, fixedClock);
+  const prepared = prepareProjectDispatches(started.store, approved.projectId, fixedClock);
+  assert.equal(prepared.assignments.length, 1);
+  const assignment = prepared.assignments[0];
+  assert.equal(assignment.taskId, "task-store");
+  assert.equal(assignment.workerChatId, "worker-a");
+  assert.match(assignment.dispatchId, /^dispatch-store-a1-/);
+  assert.equal(prepared.tasks["task-store"].status, "leased");
+  assert.equal(prepared.tasks["task-store"].lease.dispatchId, assignment.dispatchId);
+  assert.match(assignment.branch, /^agent\/project-mode\/store-a1$/);
+  assert.match(assignment.prompt, /No ChatGPT prompt was sent|bounded worker|AUTOPROMPTER_TASK_RESULT_BEGIN/i);
+
+  const repeated = prepareProjectDispatches(prepared.store, approved.projectId, fixedClock);
+  assert.equal(repeated.assignments.length, 0);
+  assert.equal(Object.keys(repeated.dispatches).length, 1);
+  assert.equal(repeated.runtimeSummary.activeLeaseCount, 1);
+});
+
+test("expired leases return eligible tasks to the queue and preserve attempt history", () => {
+  const approved = approvedProjectStore();
+  const started = startProject(approved.store, approved.projectId, fixedClock);
+  const prepared = prepareProjectDispatches(started.store, approved.projectId, fixedClock);
+  const dispatchId = prepared.assignments[0].dispatchId;
+  const later = () => Date.parse("2026-07-31T06:31:00Z");
+  const recovered = recoverProjectLeases(prepared.store, approved.projectId, later);
+  assert.deepEqual(recovered.expiredDispatchIds, [dispatchId]);
+  assert.equal(recovered.tasks["task-store"].status, "ready");
+  assert.equal(recovered.tasks["task-store"].lease, null);
+  assert.equal(recovered.tasks["task-store"].attempt, 1);
+  assert.equal(recovered.dispatches[dispatchId].status, "expired");
+
+  const retried = prepareProjectDispatches(recovered.store, approved.projectId, later);
+  assert.equal(retried.assignments[0].attempt, 2);
+  assert.notEqual(retried.assignments[0].dispatchId, dispatchId);
+});
+
+test("accepted dependencies unlock blocked tasks during recovery", () => {
+  const approved = approvedProjectStore();
+  const started = startProject(approved.store, approved.projectId, fixedClock);
+  started.store.tasksByProject[approved.projectId]["task-store"].status = "accepted";
+  const recovered = recoverProjectLeases(started.store, approved.projectId, fixedClock);
+  assert.deepEqual(recovered.unlockedTaskIds, ["task-tests"]);
+  assert.equal(recovered.tasks["task-tests"].status, "ready");
+  const prepared = prepareProjectDispatches(recovered.store, approved.projectId, fixedClock);
+  assert.equal(prepared.assignments[0].taskId, "task-tests");
+});
+
+test("restart recovery expires stale leases across every project", () => {
+  const approved = approvedProjectStore();
+  const started = startProject(approved.store, approved.projectId, fixedClock);
+  const prepared = prepareProjectDispatches(started.store, approved.projectId, fixedClock);
+  const later = () => Date.parse("2026-07-31T06:31:00Z");
+  const recovered = recoverAllProjectLeases(prepared.store, later);
+  assert.equal(recovered.changed, true);
+  assert.equal(recovered.store.tasksByProject[approved.projectId]["task-store"].status, "ready");
+  assert.equal(Object.keys(recovered.recovered).length, 1);
+});
+
+test("cancelling a running project releases leases and cancels prepared dispatches", () => {
+  const approved = approvedProjectStore();
+  const started = startProject(approved.store, approved.projectId, fixedClock);
+  const prepared = prepareProjectDispatches(started.store, approved.projectId, fixedClock);
+  const dispatchId = prepared.assignments[0].dispatchId;
+  const cancelled = transitionProject(prepared.store, approved.projectId, "cancel", fixedClock);
+  assert.equal(cancelled.project.status, "cancelled");
+  assert.equal(cancelled.store.tasksByProject[approved.projectId]["task-store"].lease, null);
+  assert.equal(cancelled.store.tasksByProject[approved.projectId]["task-store"].status, "cancelled");
+  assert.equal(cancelled.store.dispatchesByProject[approved.projectId][dispatchId].status, "cancelled");
+});
+
+
+test("assignment preparation respects the project concurrency ceiling", () => {
+  const created = createProject(emptyStore(), validInput({
+    workerChatIds: ["worker-a", "worker-b", "worker-c"],
+    maxConcurrentWorkers: 2
+  }), fixedClock);
+  const projectId = created.project.projectId;
+  const baseTask = {
+    description: "Independent bounded task.",
+    dependencies: [],
+    role: "implementation",
+    difficulty: "small",
+    preferredModelClass: "fast",
+    allowedPaths: ["src/**"],
+    acceptanceCriteria: ["Task completes."],
+    verificationCommands: ["npm test"]
+  };
+  const tasks = ["alpha", "beta", "gamma"].map(name => ({
+    ...baseTask,
+    id: `task-${name}`,
+    title: `Task ${name}`
+  }));
+  const plan = plannerPlan(projectId, {
+    phases: [{
+      id: "phase-parallel",
+      title: "Parallel",
+      taskIds: tasks.map(task => task.id),
+      acceptanceCriteria: ["All independent tasks are validated."]
+    }],
+    tasks,
+    criticalPath: ["task-alpha"]
+  });
+  const submitted = submitProjectPlannerOutput(created.store, projectId, `${PLAN_BEGIN}\n${JSON.stringify(plan)}\n${PLAN_END}`, fixedClock);
+  const approved = approveProjectPlan(submitted.store, projectId, fixedClock);
+  const started = startProject(approved.store, projectId, fixedClock);
+  const prepared = prepareProjectDispatches(started.store, projectId, fixedClock);
+  assert.equal(prepared.assignments.length, 2);
+  assert.deepEqual(prepared.assignments.map(item => item.taskId), ["task-alpha", "task-beta"]);
+  assert.deepEqual(prepared.assignments.map(item => item.workerChatId), ["worker-a", "worker-b"]);
+  assert.equal(prepared.tasks["task-gamma"].status, "ready");
+  assert.equal(prepared.runtimeSummary.availableWorkerCount, 1);
+});
+
+test("restart recovery closes orphaned dispatches and malformed leased tasks", () => {
+  const approved = approvedProjectStore();
+  const started = startProject(approved.store, approved.projectId, fixedClock);
+  const prepared = prepareProjectDispatches(started.store, approved.projectId, fixedClock);
+  const dispatchId = prepared.assignments[0].dispatchId;
+  prepared.store.tasksByProject[approved.projectId]["task-store"].lease = null;
+  const recovered = recoverAllProjectLeases(prepared.store, fixedClock);
+  assert.equal(recovered.changed, true);
+  assert.equal(recovered.store.tasksByProject[approved.projectId]["task-store"].status, "ready");
+  assert.equal(recovered.store.dispatchesByProject[approved.projectId][dispatchId].status, "expired");
 });

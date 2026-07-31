@@ -34,7 +34,7 @@ test("chat discovery preserves sidebar order instead of alphabetizing", () => {
 test("Project Mode foundation exposes lifecycle and approval-gated planner controls", () => {
   assert.match(popupHtml, /id="projectModePanel"/);
   assert.match(popupHtml, /id="createProject"/);
-  assert.match(popupHtml, /does not dispatch planner, worker, reviewer, or integrator chats/);
+  assert.match(popupHtml, /does not send planner, worker, reviewer, or integrator prompts/);
   assert.match(popupJs, /runtimeMessage\("CREATE_PROJECT"/);
   assert.match(popupJs, /runtimeMessage\("INSPECT_PROJECT"/);
   assert.match(popupJs, /transitionProject\("PAUSE_PROJECT"\)/);
@@ -47,4 +47,12 @@ test("Project Mode foundation exposes lifecycle and approval-gated planner contr
   assert.match(popupJs, /runtimeMessage\("SUBMIT_PLANNER_OUTPUT"/);
   assert.match(popupJs, /runtimeMessage\("APPROVE_PROJECT_PLAN"/);
   assert.match(popupJs, /No task records exist until approval/);
+  assert.match(popupHtml, /id="startProjectMode"/);
+  assert.match(popupHtml, /id="prepareProjectAssignments"/);
+  assert.match(popupHtml, /id="recoverProjectLeases"/);
+  assert.match(popupHtml, /Prepared prompts stay in extension storage and are not sent to ChatGPT/);
+  assert.match(popupJs, /runtimeMessage\("START_PROJECT_MODE"/);
+  assert.match(popupJs, /runtimeMessage\("PREPARE_PROJECT_ASSIGNMENTS"/);
+  assert.match(popupJs, /runtimeMessage\("RECOVER_PROJECT_LEASES"/);
+  assert.match(popupJs, /No chats were messaged/);
 });

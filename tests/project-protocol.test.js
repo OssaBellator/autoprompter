@@ -51,7 +51,8 @@ test("protocol schemas are draft 2020-12 JSON documents", () => {
     "project.schema.json",
     "plan.schema.json",
     "task.schema.json",
-    "result.schema.json"
+    "result.schema.json",
+    "dispatch.schema.json"
   ]) {
     const schema = readJson(path.join("schemas", filename));
     assert.equal(schema.$schema, "https://json-schema.org/draft/2020-12/schema");
@@ -121,4 +122,27 @@ test("sample worker result references a known task and valid commit claim", () =
   assert.match(result.commit, /^[0-9a-f]{7,64}$/i);
   assert.ok(result.tests.some(entry => entry.status === "passed"));
   for (const changedPath of result.filesChanged) assertSafeRelativePath(changedPath);
+});
+
+
+test("dispatch and lease schemas carry the idempotent dispatch ID", () => {
+  const taskSchema = readJson(path.join("schemas", "task.schema.json"));
+  const leaseSchema = taskSchema.properties.lease.oneOf.find(entry => entry.type === "object");
+  assert.ok(leaseSchema.required.includes("dispatchId"));
+  assert.match(leaseSchema.properties.dispatchId.pattern, /dispatch/);
+
+  const dispatchSchema = readJson(path.join("schemas", "dispatch.schema.json"));
+  assert.ok(dispatchSchema.required.includes("prompt"));
+  assert.ok(dispatchSchema.required.includes("expiresAt"));
+  assert.equal(dispatchSchema.properties.status.enum.includes("prepared"), true);
+});
+
+test("sample dispatch and result preserve task and dispatch identity", () => {
+  const dispatch = readFixture(path.join("dispatches", "dispatch-project-schema-a1-example1.json"));
+  const result = readFixture(path.join("results", "task-project-schema.json"));
+  assert.equal(result.dispatchId, dispatch.dispatchId);
+  assert.equal(result.taskId, dispatch.taskId);
+  assert.equal(result.projectId, dispatch.projectId);
+  assert.equal(result.attempt, dispatch.attempt);
+  assert.match(dispatch.branch, /^agent\//);
 });

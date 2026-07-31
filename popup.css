@@ -110,3 +110,41 @@ select { width: 100%; margin-top: 6px; padding: 8px; border: 1px solid color-mix
 .planner-workbench pre {
   max-height: 180px;
 }
+
+.worker-workbench {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+}
+
+.worker-workbench textarea {
+  min-height: 120px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.project-worker-state {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.project-worker-row,
+.project-task-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, CanvasText 3%, transparent);
+  font-size: 11px;
+}
+
+.project-worker-row small,
+.project-task-row small {
+  color: GrayText;
+  text-align: right;
+}

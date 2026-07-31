@@ -25,7 +25,7 @@ AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that runs sele
 - Verified successor chats when a repository checkpoint is available, plus best-effort fresh-chat recovery for actual context-limit failures that occur before a checkpoint can be created.
 - Incremental durability instructions that ask the selected repository tool to commit completed logical units before lengthy or risky work continues.
 - Default-on automatic circuit breaker for rate limits, account restrictions, and safety blocks, with an explicit disable option for false-positive troubleshooting.
-- Draft Project Mode foundation on the development branch: versioned local project storage, fixed planner/reviewer/integrator roles, selected-chat worker pools, lifecycle controls, strict planner-envelope validation, approval-gated task creation, and an audit trail. The foundation does not dispatch agents yet.
+- Draft Project Mode foundation on the development branch: versioned local project storage, fixed planner/reviewer/integrator roles, strict planner-envelope validation, approval-gated task creation, deterministic worker leases, bounded local assignment preparation, restart recovery, and an audit trail. Prepared worker prompts remain local and are not sent automatically.
 
 ## Install in Edge
 

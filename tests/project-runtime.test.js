@@ -117,9 +117,9 @@ test("GET_PROJECTS initializes and persists the current store schema", async () 
   resetHarness();
   const response = await dispatch("GET_PROJECTS");
   assert.equal(response.ok, true);
-  assert.equal(response.projectStoreVersion, "1.1");
+  assert.equal(response.projectStoreVersion, "1.2");
   assert.deepEqual(response.projects, []);
-  assert.equal(localStore.autoprompterProjects.schemaVersion, "1.1");
+  assert.equal(localStore.autoprompterProjects.schemaVersion, "1.2");
 });
 
 test("project lifecycle commands persist deterministic transitions", async () => {
@@ -206,4 +206,53 @@ test("planner output can be discarded without task creation", async () => {
   assert.equal(discarded.ok, true);
   assert.equal(discarded.project.status, "draft");
   assert.deepEqual(discarded.tasks, {});
+});
+
+
+test("worker assignment preparation is bounded, idempotent, and does not open tabs", async () => {
+  resetHarness();
+  const created = await dispatch("CREATE_PROJECT", { project: projectInput() });
+  const projectId = created.project.projectId;
+  await dispatch("SUBMIT_PLANNER_OUTPUT", { projectId, output: plannerOutput(projectId) });
+  await dispatch("APPROVE_PROJECT_PLAN", { projectId });
+
+  const started = await dispatch("START_PROJECT_MODE", { projectId });
+  assert.equal(started.ok, true);
+  assert.equal(started.project.status, "running");
+  assert.deepEqual(started.dispatches, {});
+
+  const prepared = await dispatch("PREPARE_PROJECT_ASSIGNMENTS", { projectId });
+  assert.equal(prepared.ok, true);
+  assert.equal(prepared.assignments.length, 1);
+  assert.equal(prepared.assignments[0].taskId, "task-store");
+  assert.equal(prepared.assignments[0].workerChatId, "worker-one");
+  assert.match(prepared.assignments[0].prompt, /AUTOPROMPTER_TASK_RESULT_BEGIN/);
+  assert.equal(prepared.runtimeSummary.activeLeaseCount, 1);
+
+  const repeated = await dispatch("PREPARE_PROJECT_ASSIGNMENTS", { projectId });
+  assert.equal(repeated.ok, true);
+  assert.deepEqual(repeated.assignments, []);
+  assert.equal(Object.keys(repeated.dispatches).length, 1);
+});
+
+test("service-worker load recovers expired leases after restart", async () => {
+  resetHarness();
+  const created = await dispatch("CREATE_PROJECT", { project: projectInput() });
+  const projectId = created.project.projectId;
+  await dispatch("SUBMIT_PLANNER_OUTPUT", { projectId, output: plannerOutput(projectId) });
+  await dispatch("APPROVE_PROJECT_PLAN", { projectId });
+  await dispatch("START_PROJECT_MODE", { projectId });
+  const prepared = await dispatch("PREPARE_PROJECT_ASSIGNMENTS", { projectId });
+  const dispatchId = prepared.assignments[0].dispatchId;
+
+  localStore.autoprompterProjects.tasksByProject[projectId]["task-store"].lease.expiresAt = "2000-01-01T00:00:00.000Z";
+  localStore.autoprompterProjects.dispatchesByProject[projectId][dispatchId].expiresAt = "2000-01-01T00:00:00.000Z";
+
+  const projects = await dispatch("GET_PROJECTS");
+  assert.equal(projects.ok, true);
+  const inspected = await dispatch("INSPECT_PROJECT", { projectId });
+  assert.equal(inspected.tasks["task-store"].status, "ready");
+  assert.equal(inspected.tasks["task-store"].lease, null);
+  assert.equal(inspected.dispatches[dispatchId].status, "expired");
+  assert.equal(inspected.runtimeSummary.activeLeaseCount, 0);
 });

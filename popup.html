@@ -106,7 +106,7 @@
     <details id="projectModePanel" class="continuity project-mode">
       <summary>Project Mode foundation</summary>
       <div class="details-body">
-        <p class="hint">Create durable project state, validate a planner envelope, and explicitly approve task creation. This foundation does not dispatch planner, worker, reviewer, or integrator chats.</p>
+        <p class="hint">Create durable project state, validate and approve a planner envelope, then prepare bounded worker leases. Project Mode still does not send planner, worker, reviewer, or integrator prompts.</p>
 
         <div class="project-toolbar">
           <label>
@@ -147,6 +147,24 @@
               <button id="discardProjectPlan" class="compact" type="button">Discard pending plan</button>
             </div>
             <pre id="plannerPlanSummary"></pre>
+          </section>
+
+          <section id="workerWorkbench" class="worker-workbench">
+            <strong>Worker lease preparation</strong>
+            <p class="hint">Starting a project enables local assignment preparation only. Prepared prompts stay in extension storage and are not sent to ChatGPT.</p>
+            <div class="inline-actions">
+              <button id="startProjectMode" class="compact" type="button">Start project locally</button>
+              <button id="prepareProjectAssignments" class="compact" type="button">Prepare assignments</button>
+              <button id="recoverProjectLeases" class="compact" type="button">Recover expired leases</button>
+            </div>
+            <div id="projectWorkerState" class="project-worker-state"></div>
+            <label>
+              Prepared assignment
+              <select id="projectDispatchSelect">
+                <option value="">No prepared assignments</option>
+              </select>
+            </label>
+            <textarea id="projectDispatchPrompt" rows="8" readonly placeholder="Prepared worker prompts remain local until a later dispatch milestone"></textarea>
           </section>
         </div>
 

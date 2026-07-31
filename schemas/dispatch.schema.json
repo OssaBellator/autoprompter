@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/OssaBellator/autoprompter/schemas/dispatch.schema.json",
+  "title": "AutoPrompter Prepared Worker Dispatch",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "dispatchId",
+    "projectId",
+    "planRevision",
+    "taskId",
+    "workerChatId",
+    "attempt",
+    "branch",
+    "status",
+    "assignedAt",
+    "expiresAt",
+    "prompt",
+    "createdAt",
+    "updatedAt",
+    "expiredAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "dispatchId": { "type": "string", "pattern": "^dispatch-[a-z0-9._-]+$", "maxLength": 200 },
+    "projectId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$" },
+    "planRevision": { "type": "integer", "minimum": 1, "maximum": 1000 },
+    "taskId": { "type": "string", "pattern": "^task-[a-z0-9._-]+$" },
+    "workerChatId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "attempt": { "type": "integer", "minimum": 1, "maximum": 50 },
+    "branch": { "type": "string", "pattern": "^agent/[a-z0-9._-]+/[a-z0-9._-]+$", "maxLength": 240 },
+    "status": { "type": "string", "enum": ["prepared", "dispatched", "running", "completed", "expired", "cancelled"] },
+    "assignedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "prompt": { "type": "string", "minLength": 1, "maxLength": 18000 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "expiredAt": { "type": ["string", "null"], "format": "date-time" }
+  }
+}

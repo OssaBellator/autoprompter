@@ -3,12 +3,14 @@
 (function attachProjectStore(root, factory) {
   const plannerProtocol = root.AutoPrompterPlannerProtocol
     || (typeof require === "function" ? require("./planner-protocol.js") : null);
-  const api = factory(plannerProtocol);
+  const workerProtocol = root.AutoPrompterWorkerProtocol
+    || (typeof require === "function" ? require("./worker-protocol.js") : null);
+  const api = factory(plannerProtocol, workerProtocol);
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.AutoPrompterProjectStore = api;
-})(typeof globalThis !== "undefined" ? globalThis : self, PlannerProtocol => {
+})(typeof globalThis !== "undefined" ? globalThis : self, (PlannerProtocol, WorkerProtocol) => {
   const PROJECTS_KEY = "autoprompterProjects";
-  const STORE_SCHEMA_VERSION = "1.1";
+  const STORE_SCHEMA_VERSION = "1.2";
   const PROJECT_SCHEMA_VERSION = "1.0";
   const MAX_PROJECT_EVENTS = 200;
   const ACTIVE_STATUSES = new Set(["draft", "planning", "ready", "running"]);
@@ -96,6 +98,7 @@
       pendingPlansByProject: {},
       approvedPlansByProject: {},
       tasksByProject: {},
+      dispatchesByProject: {},
       events: []
     };
   }
@@ -153,7 +156,7 @@
 
   function migrateStore(raw) {
     if (!raw) return { store: emptyStore(), migrated: true };
-    if ([STORE_SCHEMA_VERSION, "1.0"].includes(raw.schemaVersion) && raw.projects && !Array.isArray(raw.projects)) {
+    if ([STORE_SCHEMA_VERSION, "1.1", "1.0"].includes(raw.schemaVersion) && raw.projects && !Array.isArray(raw.projects)) {
       const store = emptyStore();
       for (const [id, project] of Object.entries(raw.projects)) {
         const normalized = normalizeStoredProject(project);
@@ -163,7 +166,7 @@
       store.resumeStatusByProject = raw.resumeStatusByProject && typeof raw.resumeStatusByProject === "object"
         ? Object.fromEntries(Object.entries(raw.resumeStatusByProject).filter(([id, status]) => store.projects[id] && ACTIVE_STATUSES.has(status)))
         : {};
-      if (raw.schemaVersion === STORE_SCHEMA_VERSION && PlannerProtocol) {
+      if ([STORE_SCHEMA_VERSION, "1.1"].includes(raw.schemaVersion) && PlannerProtocol) {
         for (const [projectId, plan] of Object.entries(raw.pendingPlansByProject || {})) {
           const project = store.projects[projectId];
           if (!project) continue;
@@ -176,6 +179,13 @@
         }
         for (const [projectId, tasks] of Object.entries(raw.tasksByProject || {})) {
           if (store.projects[projectId] && tasks && typeof tasks === "object" && !Array.isArray(tasks)) store.tasksByProject[projectId] = clone(tasks);
+        }
+        if (raw.schemaVersion === STORE_SCHEMA_VERSION) {
+          for (const [projectId, dispatches] of Object.entries(raw.dispatchesByProject || {})) {
+            if (store.projects[projectId] && dispatches && typeof dispatches === "object" && !Array.isArray(dispatches)) {
+              store.dispatchesByProject[projectId] = clone(dispatches);
+            }
+          }
         }
       }
       store.events = Array.isArray(raw.events) ? raw.events.slice(-MAX_PROJECT_EVENTS) : [];
@@ -262,6 +272,227 @@
   function requirePlannerProtocol() {
     if (!PlannerProtocol) throw new Error("Planner protocol is unavailable.");
     return PlannerProtocol;
+  }
+
+  function requireWorkerProtocol() {
+    if (!WorkerProtocol) throw new Error("Worker protocol is unavailable.");
+    return WorkerProtocol;
+  }
+
+  function taskDependenciesAccepted(tasks, task) {
+    return task.dependencies.every(dependencyId => tasks[dependencyId]?.status === "accepted");
+  }
+
+  function reconcileTaskReadiness(tasks, at) {
+    const unlocked = [];
+    for (const task of Object.values(tasks || {})) {
+      if (!task || ["leased", "running", "review", "revision_required", "accepted", "failed", "cancelled"].includes(task.status)) continue;
+      const nextStatus = taskDependenciesAccepted(tasks, task) ? "ready" : "blocked";
+      if (task.status !== nextStatus) {
+        task.status = nextStatus;
+        task.updatedAt = at;
+        if (nextStatus === "ready") unlocked.push(task.id);
+      }
+    }
+    return unlocked;
+  }
+
+  function orderedTaskIds(store, projectId) {
+    const tasks = store.tasksByProject[projectId] || {};
+    const planOrder = (store.approvedPlansByProject[projectId]?.tasks || []).map(task => task.id);
+    const known = new Set(planOrder);
+    return [...planOrder, ...Object.keys(tasks).filter(id => !known.has(id)).sort()];
+  }
+
+  function activeDispatchesForProject(store, projectId) {
+    return requireWorkerProtocol().activeDispatches(store.dispatchesByProject[projectId] || {});
+  }
+
+  function reconcileProjectRuntimeMutable(store, projectId, clock = Date.now) {
+    const project = store.projects[projectId];
+    if (!project) return { changed: false, expiredDispatchIds: [], unlockedTaskIds: [] };
+    const tasks = store.tasksByProject[projectId] || {};
+    const dispatches = store.dispatchesByProject[projectId] || {};
+    const at = nowIso(clock);
+    const now = clock();
+    const expiredDispatchIds = [];
+    let changed = false;
+
+    for (const task of Object.values(tasks)) {
+      if (!["leased", "running"].includes(task?.status)) continue;
+      if (!task.lease) {
+        task.branch = null;
+        task.status = taskDependenciesAccepted(tasks, task) ? "ready" : "blocked";
+        task.updatedAt = at;
+        changed = true;
+        continue;
+      }
+      if (!requireWorkerProtocol().isLeaseExpired(task.lease, now)) continue;
+      const dispatchId = task.lease.dispatchId;
+      const dispatch = dispatches[dispatchId];
+      if (dispatch && requireWorkerProtocol().ACTIVE_DISPATCH_STATUSES.includes(dispatch.status)) {
+        dispatch.status = "expired";
+        dispatch.expiredAt = at;
+        dispatch.updatedAt = at;
+      }
+      task.lease = null;
+      task.branch = null;
+      task.status = taskDependenciesAccepted(tasks, task) ? "ready" : "blocked";
+      task.updatedAt = at;
+      expiredDispatchIds.push(dispatchId || task.id);
+      changed = true;
+    }
+
+    for (const dispatch of Object.values(dispatches)) {
+      if (!requireWorkerProtocol().ACTIVE_DISPATCH_STATUSES.includes(dispatch?.status)) continue;
+      const task = tasks[dispatch.taskId];
+      if (task?.lease?.dispatchId === dispatch.dispatchId && task.lease.workerChatId === dispatch.workerChatId) continue;
+      dispatch.status = "expired";
+      dispatch.expiredAt = at;
+      dispatch.updatedAt = at;
+      if (!expiredDispatchIds.includes(dispatch.dispatchId)) expiredDispatchIds.push(dispatch.dispatchId);
+      changed = true;
+    }
+
+    const unlockedTaskIds = reconcileTaskReadiness(tasks, at);
+    if (unlockedTaskIds.length) changed = true;
+    if (changed) {
+      store.tasksByProject[projectId] = tasks;
+      store.dispatchesByProject[projectId] = dispatches;
+      project.updatedAt = at;
+      for (const dispatchId of expiredDispatchIds) {
+        appendEvent(store, "worker_lease_expired", projectId, at, `Released expired dispatch ${dispatchId}`);
+      }
+      if (unlockedTaskIds.length) {
+        appendEvent(store, "tasks_unblocked", projectId, at, `Ready tasks: ${unlockedTaskIds.join(", ")}`);
+      }
+    }
+    return { changed, expiredDispatchIds, unlockedTaskIds };
+  }
+
+  function recoverAllProjectLeases(storeInput, clock = Date.now) {
+    const store = clone(storeInput);
+    let changed = false;
+    const recovered = {};
+    for (const projectId of Object.keys(store.projects)) {
+      const result = reconcileProjectRuntimeMutable(store, projectId, clock);
+      if (result.changed) {
+        changed = true;
+        recovered[projectId] = result;
+      }
+    }
+    return { store, changed, recovered };
+  }
+
+  function startProject(storeInput, projectId, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    if (project.status !== "ready") throw new Error("Only a ready project can be started.");
+    if (!store.approvedPlansByProject[id] || !Object.keys(store.tasksByProject[id] || {}).length) {
+      throw new Error("Approve a planner result before starting the project.");
+    }
+    if (!project.roles.workerChatIds.length) throw new Error("At least one worker chat is required before starting.");
+    const at = nowIso(clock);
+    project.status = "running";
+    project.updatedAt = at;
+    store.activeProjectId = id;
+    appendEvent(store, "project_started", id, at, "Project entered local assignment-preparation mode; no chats were dispatched");
+    return { store, project: clone(project) };
+  }
+
+  function prepareProjectDispatches(storeInput, projectId, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    if (project.status !== "running") throw new Error("Start the ready project before preparing worker assignments.");
+    const plan = store.approvedPlansByProject[id];
+    const tasks = store.tasksByProject[id] || {};
+    if (!plan || !Object.keys(tasks).length) throw new Error("No approved tasks are available for assignment.");
+
+    reconcileProjectRuntimeMutable(store, id, clock);
+    const workerProtocol = requireWorkerProtocol();
+    const dispatches = store.dispatchesByProject[id] || {};
+    const active = workerProtocol.activeDispatches(dispatches);
+    const occupiedWorkers = new Set(active.map(dispatch => dispatch.workerChatId));
+    const availableWorkers = project.roles.workerChatIds.filter(workerId => !occupiedWorkers.has(workerId));
+    const remainingCapacity = Math.max(0, project.scheduler.maxConcurrentWorkers - active.length);
+    const readyTasks = orderedTaskIds(store, id)
+      .map(taskId => tasks[taskId])
+      .filter(task => task?.status === "ready" && !task.lease);
+    const assignmentCount = Math.min(remainingCapacity, availableWorkers.length, readyTasks.length);
+    const at = nowIso(clock);
+    const expiresAt = new Date(clock() + project.scheduler.leaseMinutes * 60_000).toISOString();
+    const assignments = [];
+
+    for (let index = 0; index < assignmentCount; index += 1) {
+      const task = readyTasks[index];
+      const workerChatId = availableWorkers[index];
+      const attempt = Math.min(50, Number(task.attempt || 0) + 1);
+      if (attempt <= Number(task.attempt || 0)) throw new Error(`${task.id} exceeded the maximum lease attempts.`);
+      const dispatchId = workerProtocol.buildDispatchId({
+        projectId: id,
+        revision: plan.revision,
+        taskId: task.id,
+        attempt,
+        workerChatId
+      });
+      const branch = workerProtocol.buildBranchName(id, task.id, attempt);
+      if (dispatches[dispatchId]) throw new Error(`Dispatch ID collision for ${task.id}.`);
+      const dispatch = {
+        schemaVersion: workerProtocol.DISPATCH_SCHEMA_VERSION,
+        dispatchId,
+        projectId: id,
+        planRevision: plan.revision,
+        taskId: task.id,
+        workerChatId,
+        attempt,
+        branch,
+        status: "prepared",
+        assignedAt: at,
+        expiresAt,
+        prompt: "",
+        createdAt: at,
+        updatedAt: at,
+        expiredAt: null
+      };
+      dispatch.prompt = workerProtocol.buildWorkerPrompt(project, task, dispatch);
+      dispatches[dispatchId] = dispatch;
+      task.status = "leased";
+      task.attempt = attempt;
+      task.branch = branch;
+      task.lease = { dispatchId, workerChatId, assignedAt: at, expiresAt, attempt };
+      task.updatedAt = at;
+      assignments.push(clone(dispatch));
+      appendEvent(store, "worker_dispatch_prepared", id, at, `${dispatchId} assigned ${task.id} to ${workerChatId}; no chat was messaged`);
+    }
+
+    store.tasksByProject[id] = tasks;
+    store.dispatchesByProject[id] = dispatches;
+    if (assignments.length) project.updatedAt = at;
+    store.activeProjectId = id;
+    return {
+      store,
+      project: clone(project),
+      tasks: clone(tasks),
+      dispatches: clone(dispatches),
+      assignments,
+      runtimeSummary: workerProtocol.summarizeRuntime(project, tasks, dispatches)
+    };
+  }
+
+  function recoverProjectLeases(storeInput, projectId, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const result = reconcileProjectRuntimeMutable(store, id, clock);
+    store.activeProjectId = id;
+    return {
+      store,
+      project: clone(project),
+      tasks: clone(store.tasksByProject[id] || {}),
+      dispatches: clone(store.dispatchesByProject[id] || {}),
+      expiredDispatchIds: result.expiredDispatchIds,
+      unlockedTaskIds: result.unlockedTaskIds,
+      runtimeSummary: requireWorkerProtocol().summarizeRuntime(project, store.tasksByProject[id] || {}, store.dispatchesByProject[id] || {})
+    };
   }
 
   function selectedProject(store, projectId = "") {
@@ -355,7 +586,9 @@
       events: store.events.filter(event => event.projectId === id),
       pendingPlan: clone(store.pendingPlansByProject[id] || null),
       approvedPlan: clone(store.approvedPlansByProject[id] || null),
-      tasks: clone(store.tasksByProject[id] || {})
+      tasks: clone(store.tasksByProject[id] || {}),
+      dispatches: clone(store.dispatchesByProject[id] || {}),
+      runtimeSummary: requireWorkerProtocol().summarizeRuntime(project, store.tasksByProject[id] || {}, store.dispatchesByProject[id] || {})
     };
   }
 
@@ -378,6 +611,21 @@
       if (TERMINAL_STATUSES.has(project.status)) throw new Error(`Cannot cancel a ${project.status} project.`);
       project.status = "cancelled";
       delete store.resumeStatusByProject[id];
+      const tasks = store.tasksByProject[id] || {};
+      const dispatches = store.dispatchesByProject[id] || {};
+      for (const task of Object.values(tasks)) {
+        if (!["accepted", "failed", "cancelled"].includes(task.status)) task.status = "cancelled";
+        task.lease = null;
+        task.updatedAt = at;
+      }
+      for (const dispatch of Object.values(dispatches)) {
+        if (requireWorkerProtocol().ACTIVE_DISPATCH_STATUSES.includes(dispatch.status)) {
+          dispatch.status = "cancelled";
+          dispatch.updatedAt = at;
+        }
+      }
+      store.tasksByProject[id] = tasks;
+      store.dispatchesByProject[id] = dispatches;
     } else {
       throw new Error(`Unknown project transition: ${action}`);
     }
@@ -414,6 +662,11 @@
     buildProjectPlannerPrompt,
     submitProjectPlannerOutput,
     approveProjectPlan,
-    discardProjectPlan
+    discardProjectPlan,
+    recoverAllProjectLeases,
+    startProject,
+    prepareProjectDispatches,
+    recoverProjectLeases,
+    activeDispatchesForProject
   };
 });

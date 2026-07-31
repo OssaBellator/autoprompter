@@ -212,18 +212,33 @@ Implementation status: complete on the Project Mode development branch.
 - Materialize approved tasks as `ready` or `blocked` records, then move the project to `ready`.
 - Keep live planner and worker dispatch disabled in this milestone.
 
-### Milestone 4 — worker leases and dispatch
+### Milestone 4 — worker leases and dispatch preparation
 
-- Assign ready tasks to selected worker chats.
-- Persist idempotent dispatch IDs.
-- Recover active leases after extension restart.
-- Never duplicate a valid active lease.
+Implementation status: complete on the Project Mode development branch.
 
-### Milestone 5 — review and integration
+- Require an explicit local project start before assignments can be prepared.
+- Select dependency-ready tasks in approved-plan order and respect the configured concurrency ceiling.
+- Assign only currently available worker chats and persist one deterministic dispatch ID per task attempt.
+- Generate deterministic task branches and bounded, repository-anchored worker prompts.
+- Store leases, prepared dispatches, prompts, worker occupancy, and task status under schema version `1.2`.
+- Recover expired, malformed, and orphaned leases after extension restart without duplicating valid active work.
+- Return expired tasks to `ready` or `blocked`, preserve attempt history, and cancel active leases when the project is cancelled.
+- Display worker capacity, task state, prepared assignments, and local prompts in the popup.
+- Do not open tabs or send ChatGPT messages in this milestone.
 
-- Route results through reviewer chats.
-- Support bounded revisions.
+### Milestone 5 — worker results and reviewer decisions
+
+- Parse exactly one `AUTOPROMPTER_TASK_RESULT_BEGIN` / `AUTOPROMPTER_TASK_RESULT_END` envelope.
+- Require matching project, task, dispatch, attempt, and worker identities.
+- Validate commit claims, changed paths, test evidence, blockers, and timestamps.
+- Route validated results to explicit reviewer acceptance or bounded revision decisions.
+- Keep live worker submission disabled until result recovery and duplicate-result handling are tested.
+
+### Milestone 6 — integration
+
 - Add integrator prompts and approval-gated pull-request actions.
+- Detect overlapping task branches and unresolved conflicts.
+- Require full-project verification evidence before merge preparation.
 
 ## Open questions
 

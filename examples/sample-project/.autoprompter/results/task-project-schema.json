@@ -2,6 +2,7 @@
   "schemaVersion": "1.0",
   "projectId": "autoprompter-project-mode",
   "taskId": "task-project-schema",
+  "dispatchId": "dispatch-project-schema-a1-example1",
   "attempt": 1,
   "status": "completed",
   "summary": "Defined versioned project, plan, task, and result contracts for the web-first multi-agent protocol.",

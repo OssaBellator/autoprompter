@@ -1,7 +1,8 @@
 "use strict";
 
-if (typeof importScripts === "function") importScripts("planner-protocol.js", "project-store.js");
+if (typeof importScripts === "function") importScripts("planner-protocol.js", "worker-protocol.js", "project-store.js");
 const PlannerProtocol = globalThis.AutoPrompterPlannerProtocol || (typeof require === "function" ? require("./planner-protocol.js") : null);
+const WorkerProtocol = globalThis.AutoPrompterWorkerProtocol || (typeof require === "function" ? require("./worker-protocol.js") : null);
 const ProjectStore = globalThis.AutoPrompterProjectStore || (typeof require === "function" ? require("./project-store.js") : null);
 
 const MESSAGE_SCOPE = "AUTOPROMPTER_RUNTIME";
@@ -299,8 +300,9 @@ async function loadProjectStore() {
   if (!ProjectStore) throw new Error("Project Mode store is unavailable.");
   const stored = await chrome.storage.local.get(ProjectStore.PROJECTS_KEY);
   const migrated = ProjectStore.migrateStore(stored?.[ProjectStore.PROJECTS_KEY]);
-  if (migrated.migrated) await saveProjectStore(migrated.store);
-  return migrated.store;
+  const recovered = ProjectStore.recoverAllProjectLeases(migrated.store);
+  if (migrated.migrated || recovered.changed) await saveProjectStore(recovered.store);
+  return recovered.store;
 }
 
 async function saveProjectStore(store) {
@@ -342,7 +344,9 @@ async function inspectProjectState(projectId) {
     events: result.events,
     pendingPlan: result.pendingPlan,
     approvedPlan: result.approvedPlan,
-    tasks: result.tasks
+    tasks: result.tasks,
+    dispatches: result.dispatches,
+    runtimeSummary: result.runtimeSummary
   };
 }
 
@@ -413,6 +417,55 @@ async function discardPlannerPlanState(projectId) {
     pendingPlan: null,
     approvedPlan: result.store.approvedPlansByProject[projectId] || null,
     tasks: result.store.tasksByProject[projectId] || {}
+  };
+}
+
+async function startProjectModeState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.startProject(store, projectId);
+  await saveProjectStore(result.store);
+  const inspected = ProjectStore.inspectProject(result.store, projectId);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    tasks: inspected.tasks,
+    dispatches: inspected.dispatches,
+    runtimeSummary: inspected.runtimeSummary
+  };
+}
+
+async function prepareProjectAssignmentsState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.prepareProjectDispatches(store, projectId);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    tasks: result.tasks,
+    dispatches: result.dispatches,
+    assignments: result.assignments,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
+async function recoverProjectLeasesState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.recoverProjectLeases(store, projectId);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    tasks: result.tasks,
+    dispatches: result.dispatches,
+    expiredDispatchIds: result.expiredDispatchIds,
+    unlockedTaskIds: result.unlockedTaskIds,
+    runtimeSummary: result.runtimeSummary
   };
 }
 
@@ -1172,6 +1225,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return approvePlannerPlanState(message.projectId);
       case "DISCARD_PROJECT_PLAN":
         return discardPlannerPlanState(message.projectId);
+      case "START_PROJECT_MODE":
+        return startProjectModeState(message.projectId);
+      case "PREPARE_PROJECT_ASSIGNMENTS":
+        return prepareProjectAssignmentsState(message.projectId);
+      case "RECOVER_PROJECT_LEASES":
+        return recoverProjectLeasesState(message.projectId);
       case "CONTENT_READY": {
         const state = await loadState();
         const index = findChatIndexByTab(state, sender.tab?.id);
