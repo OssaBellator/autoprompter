@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "1.0",
+  "projectId": "autoprompter-project-mode",
+  "id": "task-protocol-tests",
+  "title": "Add protocol invariant tests",
+  "description": "Validate the example project graph and core safety invariants without introducing a runtime dependency.",
+  "status": "ready",
+  "role": "testing",
+  "difficulty": "medium",
+  "preferredModelClass": "standard",
+  "dependencies": [
+    "task-project-schema"
+  ],
+  "allowedPaths": [
+    "tests/project-protocol.test.js",
+    "examples/sample-project/**"
+  ],
+  "acceptanceCriteria": [
+    "Duplicate task identifiers are rejected.",
+    "Unknown and cyclic dependencies are rejected.",
+    "Unsafe allowed paths are rejected.",
+    "Worker chat assignments are unique."
+  ],
+  "verificationCommands": [
+    "npm test"
+  ],
+  "branch": null,
+  "attempt": 0,
+  "lease": null,
+  "resultCommit": null,
+  "createdAt": "2026-07-31T04:00:00Z",
+  "updatedAt": "2026-07-31T04:00:00Z"
+}
