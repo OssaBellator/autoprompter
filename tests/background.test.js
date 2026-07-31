@@ -6,7 +6,7 @@ const assert = require("node:assert/strict");
 global.chrome = {
   runtime: {
     onMessage: { addListener() {} },
-    getManifest: () => ({ version: "2.2.0" }),
+    getManifest: () => ({ version: "2.3.0" }),
     getURL: value => `chrome-extension://test/${value}`
   },
   action: {},
@@ -40,6 +40,8 @@ test("normalizes settings and clamps limits", () => {
   assert.equal(settings.maxContinuations, 50);
   assert.equal(settings.contextThresholdPercent, 98);
   assert.equal(settings.stallMinutes, 5);
+  assert.equal(settings.circuitBreakerEnabled, true);
+  assert.equal(normalizeSettings({ circuitBreakerEnabled: false }).circuitBreakerEnabled, false);
   assert.equal(normalizeSettings({}).prompt, DEFAULTS.prompt);
 });
 

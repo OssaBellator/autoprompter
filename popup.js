@@ -11,6 +11,7 @@ const DEFAULTS = Object.freeze({
   maxContinuations: 5,
   notificationsEnabled: true,
   notifyOnPromptDone: true,
+  circuitBreakerEnabled: true,
   continuityEnabled: false,
   repository: "",
   handoffFile: "AUTOPROMPTER_HANDOFF.md",
@@ -24,7 +25,7 @@ const DEFAULTS = Object.freeze({
 });
 
 const elements = Object.fromEntries([
-  "prompt", "delaySeconds", "maxContinuations", "notificationsEnabled", "notifyOnPromptDone",
+  "prompt", "delaySeconds", "maxContinuations", "notificationsEnabled", "notifyOnPromptDone", "disableCircuitBreaker",
   "continuityPanel", "continuityEnabled", "repository", "handoffFile", "pluginInstruction",
   "contextCapacityTokens", "contextThresholdPercent", "stallMinutes", "maxRollovers",
   "checkpointBeforePrompt", "checkpointAfterPrompt", "refresh", "filter", "selectAll", "selectNone",
@@ -38,6 +39,9 @@ let selectedIds = new Set();
 let chatConfigs = {};
 let schedulerState = null;
 let editorOptionKey = "";
+let activeChatEditorId = "";
+let loadingChatEditor = false;
+let chatConfigPersistTimer = null;
 
 function isChatGptUrl(value = "") {
   try {
@@ -58,6 +62,7 @@ function formSettings() {
     maxContinuations: Math.min(50, Math.max(1, Math.round(Number(elements.maxContinuations.value) || DEFAULTS.maxContinuations))),
     notificationsEnabled: elements.notificationsEnabled.checked,
     notifyOnPromptDone: elements.notifyOnPromptDone.checked,
+    circuitBreakerEnabled: !elements.disableCircuitBreaker.checked,
     continuityEnabled: elements.continuityEnabled.checked,
     repository: elements.repository.value.trim(),
     handoffFile: elements.handoffFile.value.trim() || DEFAULTS.handoffFile,
@@ -74,7 +79,7 @@ function formSettings() {
 function fillSettings(settings) {
   const merged = { ...DEFAULTS, ...settings };
   for (const key of ["prompt", "delaySeconds", "maxContinuations", "repository", "handoffFile", "pluginInstruction", "contextCapacityTokens", "contextThresholdPercent", "stallMinutes", "maxRollovers"]) elements[key].value = merged[key];
-  for (const key of ["notificationsEnabled", "notifyOnPromptDone", "continuityEnabled", "checkpointBeforePrompt", "checkpointAfterPrompt"]) elements[key].checked = Boolean(merged[key]);
+  for (const key of ["notificationsEnabled", "notifyOnPromptDone", "disableCircuitBreaker", "continuityEnabled", "checkpointBeforePrompt", "checkpointAfterPrompt"]) elements[key].checked = Boolean(merged[key]);
   elements.continuityPanel.open = Boolean(merged.continuityEnabled);
   updateFieldAvailability();
 }
@@ -123,17 +128,45 @@ function effectiveSettings(chatId, globalSettings, mode = "work") {
   };
 }
 
+function readChatEditorConfig() {
+  const config = {
+    prompt: elements.chatPrompt.value.trim(),
+    continuityMode: elements.chatContinuityMode.value,
+    repository: elements.chatRepository.value.trim(),
+    handoffFile: elements.chatHandoffFile.value.trim(),
+    pluginInstruction: elements.chatPluginInstruction.value.trim()
+  };
+  for (const key of Object.keys(config)) if (!config[key] || config[key] === "inherit") delete config[key];
+  return config;
+}
+
+function captureChatEditor({ persist = false, render = false } = {}) {
+  if (loadingChatEditor || !activeChatEditorId) return Promise.resolve();
+  const config = readChatEditorConfig();
+  if (Object.keys(config).length) chatConfigs[activeChatEditorId] = config;
+  else delete chatConfigs[activeChatEditorId];
+  if (render) renderCatalog();
+  if (persist) return persistChatConfigs();
+  clearTimeout(chatConfigPersistTimer);
+  chatConfigPersistTimer = setTimeout(() => persistChatConfigs().catch(() => {}), 250);
+  return Promise.resolve();
+}
+
 function loadChatEditor() {
   const id = elements.chatConfigChat.value;
   const config = configFor(id);
+  loadingChatEditor = true;
+  activeChatEditorId = id;
   elements.chatPrompt.value = config.prompt || "";
   elements.chatContinuityMode.value = config.continuityMode || "inherit";
   elements.chatRepository.value = config.repository || "";
   elements.chatHandoffFile.value = config.handoffFile || "";
   elements.chatPluginInstruction.value = config.pluginInstruction || "";
+  loadingChatEditor = false;
 }
 
 function refreshChatEditorOptions() {
+  captureChatEditor();
   const selectedChats = catalog.filter(item => selectedIds.has(item.id));
   const nextKey = selectedChats.map(chat => `${chat.id}:${chat.title}`).join("|");
   elements.chatConfigPanel.hidden = selectedChats.length === 0;
@@ -156,7 +189,7 @@ function updateFieldAvailability() {
   const continuity = elements.continuityEnabled.checked;
   const continuityFields = [elements.repository, elements.handoffFile, elements.pluginInstruction, elements.contextCapacityTokens, elements.contextThresholdPercent, elements.stallMinutes, elements.maxRollovers, elements.checkpointBeforePrompt, elements.checkpointAfterPrompt];
   for (const field of continuityFields) field.disabled = running || !continuity;
-  for (const field of [elements.prompt, elements.delaySeconds, elements.maxContinuations, elements.notificationsEnabled, elements.notifyOnPromptDone, elements.continuityEnabled]) field.disabled = running;
+  for (const field of [elements.prompt, elements.delaySeconds, elements.maxContinuations, elements.notificationsEnabled, elements.notifyOnPromptDone, elements.disableCircuitBreaker, elements.continuityEnabled]) field.disabled = running;
   elements.notifyOnPromptDone.disabled = running || !elements.notificationsEnabled.checked;
   for (const field of [elements.chatConfigChat, elements.chatPrompt, elements.chatContinuityMode, elements.chatRepository, elements.chatHandoffFile, elements.chatPluginInstruction, elements.saveChatConfig, elements.clearChatConfig]) field.disabled = running || elements.chatConfigChat.options.length === 0;
 }
@@ -259,6 +292,7 @@ function selectedChats(settings, mode) {
 
 async function start(mode = "work") {
   try {
+    await captureChatEditor({ persist: true });
     const settings = await saveSettings();
     const chats = selectedChats(settings, mode);
     if (mode === "work") {
@@ -286,19 +320,7 @@ async function refreshState() {
 }
 
 async function saveChatEditor() {
-  const id = elements.chatConfigChat.value;
-  if (!id) return;
-  const config = {
-    prompt: elements.chatPrompt.value.trim(),
-    continuityMode: elements.chatContinuityMode.value,
-    repository: elements.chatRepository.value.trim(),
-    handoffFile: elements.chatHandoffFile.value.trim(),
-    pluginInstruction: elements.chatPluginInstruction.value.trim()
-  };
-  for (const key of Object.keys(config)) if (!config[key] || config[key] === "inherit") delete config[key];
-  if (Object.keys(config).length) chatConfigs[id] = config; else delete chatConfigs[id];
-  await persistChatConfigs();
-  renderCatalog();
+  await captureChatEditor({ persist: true, render: true });
 }
 
 async function clearChatEditor() {
@@ -306,6 +328,7 @@ async function clearChatEditor() {
   if (!id) return;
   delete chatConfigs[id];
   await persistChatConfigs();
+  activeChatEditorId = id;
   loadChatEditor();
   renderCatalog();
 }
@@ -327,12 +350,19 @@ elements.selectNone.addEventListener("click", async () => { selectedIds.clear();
 elements.start.addEventListener("click", () => start("work"));
 elements.initializeContinuity.addEventListener("click", () => start("initialize"));
 elements.stop.addEventListener("click", stop);
-elements.chatConfigChat.addEventListener("change", loadChatEditor);
+elements.chatConfigChat.addEventListener("change", async () => {
+  await captureChatEditor({ persist: true });
+  loadChatEditor();
+});
 elements.saveChatConfig.addEventListener("click", () => saveChatEditor().catch(error => renderStatus({ ok: false, error: error.message })));
 elements.clearChatConfig.addEventListener("click", () => clearChatEditor().catch(error => renderStatus({ ok: false, error: error.message })));
 elements.continuityEnabled.addEventListener("change", () => { elements.continuityPanel.open = elements.continuityEnabled.checked; updateFieldAvailability(); saveSettings().catch(() => {}); });
 elements.notificationsEnabled.addEventListener("change", () => { updateFieldAvailability(); saveSettings().catch(() => {}); });
+elements.disableCircuitBreaker.addEventListener("change", () => saveSettings().catch(() => {}));
 for (const input of [elements.prompt, elements.delaySeconds, elements.maxContinuations, elements.notifyOnPromptDone, elements.repository, elements.handoffFile, elements.pluginInstruction, elements.contextCapacityTokens, elements.contextThresholdPercent, elements.stallMinutes, elements.maxRollovers, elements.checkpointBeforePrompt, elements.checkpointAfterPrompt]) input.addEventListener("change", () => saveSettings().catch(() => {}));
+for (const input of [elements.chatPrompt, elements.chatContinuityMode, elements.chatRepository, elements.chatHandoffFile, elements.chatPluginInstruction]) {
+  input.addEventListener(input.tagName === "SELECT" ? "change" : "input", () => captureChatEditor());
+}
 
 initialize().catch(error => renderStatus({ ok: false, error: error.message }));
 const timer = setInterval(refreshState, 1000);
