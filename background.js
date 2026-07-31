@@ -7,6 +7,8 @@ const CATALOG_KEY = "autoprompterChatCatalog";
 const SELECTION_KEY = "autoprompterSelectedChatIds";
 const CHAT_CONFIGS_KEY = "autoprompterChatConfigs";
 const NEW_CHAT_URL = "https://chatgpt.com/";
+const CONNECTION_RETRY_PROMPT = "Continue from where the response was interrupted. Do not repeat completed material.";
+const MAX_CONNECTION_RETRIES = 3;
 const MAX_CONCURRENT_CHATS = 12;
 const NOTIFICATION_ICON_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABPUlEQVR4nO2ZMQ7CQAwEF0QPL4UO3kDJT/kBVCehFChxfDeWbqfPaT34HKMczvfrRxNzpAPQWAAdgMYC6AA0FkAHoLEAOgCNBdABaCyADkBzyjjk/XxlHBPi8rjtev6w5+8wWfiSqIjwFahUvBTPExJQrfhGJNf0Q3CzgKq/fmNrPncAHYDGAugANCmb4JK929k/sodwegf0LL7H+dNfAQvIPrD3opR9fpchWH1b/MVXgA5AM72AsovQqDlSdhHqvVA1pr8CFpB9YNbdHTUDvAjRAWgsYOsDo15PUbbmcwdEHqraBZFc4Q6oJiGaZ9fX4ca0n8fXsFYO1VElhiB5nXAB9CxBBdDFS6CACsVLkIAqxUuAgErFS4MFVCteGiigYvHSIAFVi5cGbILVwRchGgugA9BYAB2AxgLoADRfdOpG+jsXCCIAAAAASUVORK5CYII=";
 
@@ -116,6 +118,12 @@ function normalizeConversationUrl(value) {
   }
 }
 
+function freshChatUrl(token = "", chainId = "", jobId = "") {
+  const url = new URL(NEW_CHAT_URL);
+  url.searchParams.set("autoprompter_fresh", [token, chainId, jobId, Date.now()].filter(Boolean).join(":"));
+  return url.href;
+}
+
 function isNewChatUrl(value) {
   try {
     const url = new URL(value);
@@ -150,6 +158,8 @@ function normalizeChat(chat, baseSettings = DEFAULTS) {
     currentJobId: null,
     pendingSuccessor: null,
     startInNewChat: Boolean(chat?.startInNewChat),
+    retryPrompt: "",
+    connectionRetryCount: 0,
     settings: normalizeSettings({ ...baseSettings, ...(chat?.settings || {}) })
   };
 }
@@ -387,13 +397,14 @@ async function sendChatJob(state, index) {
   }
 
   if (chat.pendingSuccessor) {
-    if (!isNewChatUrl(tab.url || "")) return;
     try {
       await chrome.tabs.sendMessage(chat.workerTabId, {
         type: "RUN_SUCCESSOR_JOB",
         token: state.token,
         jobId: chat.currentJobId,
         parentChat: chat.pendingSuccessor.parentChat,
+        parentConversationId: chat.pendingSuccessor.parentChat?.id || chat.id,
+        freshRequestId: chat.pendingSuccessor.freshRequestId || chat.currentJobId,
         settings: chat.pendingSuccessor.settings || chat.settings || state.settings,
         prompt: chat.pendingSuccessor.prompt,
         checkpoint: chat.pendingSuccessor.checkpoint,
@@ -409,13 +420,17 @@ async function sendChatJob(state, index) {
   if (!current || current.id !== chat.id) return;
 
   try {
+    const baseSettings = chat.settings || state.settings;
+    const jobSettings = chat.retryPrompt
+      ? { ...baseSettings, prompt: chat.retryPrompt, checkpointBeforePrompt: false, checkpointAfterPrompt: false }
+      : baseSettings;
     await chrome.tabs.sendMessage(chat.workerTabId, {
       type: "RUN_CHAT_JOB",
       token: state.token,
       jobId: chat.currentJobId,
       chat: { ...chat },
-      settings: chat.settings || state.settings,
-      mode: state.mode || "work"
+      settings: jobSettings,
+      mode: chat.retryPrompt ? "connection_retry" : (state.mode || "work")
     });
   } catch {
     // The content script will announce readiness after navigation settles.
@@ -523,7 +538,8 @@ async function launchAllWorkers(state) {
         settings: { ...resumeSettings, checkpointAfterPrompt: false },
         resumeSettings,
         kind: "forced_start",
-        verified: false
+        verified: false,
+        freshRequestId: `${state.token}:${chat.chainId}:${Date.now()}:${index}`
       };
       chat.status = "Opening new chat";
     } else {
@@ -557,7 +573,9 @@ async function launchAllWorkers(state) {
     .map(async index => {
       const chat = state.chats[index];
       try {
-        const targetUrl = chat.pendingSuccessor ? NEW_CHAT_URL : chat.url;
+        const targetUrl = chat.pendingSuccessor
+          ? freshChatUrl(state.token, chat.chainId, chat.pendingSuccessor.freshRequestId || chat.currentJobId)
+          : chat.url;
         await chrome.tabs.update(chat.workerTabId, { url: targetUrl, active: false });
       } catch (error) {
         const tabId = chat.workerTabId;
@@ -648,6 +666,8 @@ async function finishJob(message, sender) {
   chat.sentCount = Number(chat.sentCount || 0) + 1;
   chat.currentJobId = null;
   chat.lastError = "";
+  chat.retryPrompt = "";
+  chat.connectionRetryCount = 0;
   if (message.checkpoint) chat.lastCheckpoint = String(message.checkpoint).slice(0, 200);
   if (Number.isFinite(message.contextEstimateTokens)) chat.contextEstimateTokens = Math.round(message.contextEstimateTokens);
   if (Number.isFinite(message.contextPercent)) chat.contextPercent = Math.round(message.contextPercent * 10) / 10;
@@ -714,7 +734,8 @@ async function beginSuccessor(state, index, message) {
     settings: verified ? chatSettings : { ...chatSettings, checkpointAfterPrompt: false },
     resumeSettings: chatSettings,
     kind: verified ? "verified_handoff" : "best_effort",
-    verified
+    verified,
+    freshRequestId: `${state.token}:${chat.chainId}:${rolloverCount}:${Date.now()}`
   };
   updateOverallStatus(state, `${chat.status} for ${chat.title}`);
   await saveState(state);
@@ -739,7 +760,10 @@ async function beginSuccessor(state, index, message) {
     }
   }
   try {
-    await chrome.tabs.update(chat.workerTabId, { url: NEW_CHAT_URL, active: false });
+    await chrome.tabs.update(chat.workerTabId, {
+      url: freshChatUrl(state.token, chat.chainId, chat.pendingSuccessor?.freshRequestId || chat.currentJobId),
+      active: false
+    });
   } catch (error) {
     return failChatWorker(state, index, `Could not open a new ChatGPT conversation: ${error.message}`);
   }
@@ -757,6 +781,22 @@ async function interruptJob(message, sender) {
   if (Number.isFinite(message.contextPercent)) chat.contextPercent = Math.round(message.contextPercent * 10) / 10;
   const kind = String(message.kind || "unknown");
   const reason = String(message.message || "ChatGPT interrupted the job.").slice(0, 500);
+
+  if (kind === "connection_interrupted") {
+    const retries = Number(chat.connectionRetryCount || 0) + 1;
+    if (retries > MAX_CONNECTION_RETRIES) {
+      return failChatWorker(state, index, `The response connection was interrupted ${MAX_CONNECTION_RETRIES} times in a row.`);
+    }
+    chat.connectionRetryCount = retries;
+    chat.retryPrompt = CONNECTION_RETRY_PROMPT;
+    chat.currentJobId = null;
+    chat.status = `Retrying interrupted response (${retries}/${MAX_CONNECTION_RETRIES})`;
+    chat.lastError = reason;
+    updateOverallStatus(state, `${chat.title}: ${chat.status}`);
+    await saveState(state);
+    await notify(state, `Retrying interrupted response: ${chat.title}`, reason, `connection-${chat.id}`);
+    return queueNextChatJob(state, index);
+  }
 
   if (["context_limit", "stalled", "content_removed"].includes(kind)) {
     return beginSuccessor(state, index, { ...message, kind, reason });
@@ -784,6 +824,9 @@ async function successorCreated(message, sender) {
   }
 
   const pending = current.pendingSuccessor;
+  if (info.id === pending.parentChat?.id) {
+    return failChatWorker(state, index, "ChatGPT reopened the original conversation instead of creating a new one.");
+  }
   const parent = pending.parentChat;
   const successor = {
     ...parent,
@@ -804,6 +847,8 @@ async function successorCreated(message, sender) {
     currentJobId: null,
     pendingSuccessor: null,
     startInNewChat: false,
+    retryPrompt: "",
+    connectionRetryCount: 0,
     settings: pending.resumeSettings || current.settings || parent.settings || state.settings
   };
 
@@ -906,11 +951,14 @@ if (typeof module !== "undefined") {
     normalizeHandoffFile,
     normalizeConversationUrl,
     isNewChatUrl,
+    freshChatUrl,
     normalizeChat,
     nextEligibleIndex,
     eligibleChatIndexes,
     isChatEligible,
     buildSuccessorPrompt,
-    buildFreshStartPrompt
+    buildFreshStartPrompt,
+    CONNECTION_RETRY_PROMPT,
+    MAX_CONNECTION_RETRIES
   };
 }

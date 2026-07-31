@@ -141,3 +141,10 @@ See [`docs/MULTI_AGENT_ROADMAP.md`](docs/MULTI_AGENT_ROADMAP.md) for a planned, 
 ## License
 
 Apache-2.0. See [`LICENSE`](LICENSE).
+
+
+## Connection interruption recovery
+
+When ChatGPT shows `Connection interrupted. Waiting for the complete answer`, AutoPrompter stops the interrupted generation when a stop control is available and queues a one-time continuation prompt for that chat. The retry does not increment the completed-work counter and is limited to three consecutive attempts.
+
+Fresh-start workers now click ChatGPT's New chat control when the site restores an older `/c/<id>` route, wait for an empty conversation surface, and reject any successor whose conversation ID matches its parent.

@@ -156,3 +156,18 @@ test("chat catalog preserves sidebar recency order", () => {
   assert.deepEqual(chats.slice(0, 2).map(chat => chat.id), ["recent", "older"]);
   assert.deepEqual(chats.slice(0, 2).map(chat => chat.sidebarIndex), [0, 1]);
 });
+
+test("connection interruption is classified as a recoverable interruption", () => {
+  assert.equal(
+    classifyGuardrailText("Connection interrupted. Waiting for the complete answer", "notice").kind,
+    "connection_interrupted"
+  );
+  assert.equal(
+    classifyGuardrailText("We discussed a connection interrupted error while debugging.", "assistant"),
+    null
+  );
+  assert.equal(
+    classifyGuardrailText("Partial generated answer. Connection interrupted. Waiting for the complete answer", "assistant").kind,
+    "connection_interrupted"
+  );
+});

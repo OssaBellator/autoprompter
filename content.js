@@ -54,6 +54,14 @@
       'form button[aria-label*="Stop streaming"]',
       'button[data-testid*="stop"]'
     ],
+    newChat: [
+      'a[data-testid*="new-chat"]',
+      'button[data-testid*="new-chat"]',
+      'a[aria-label="New chat"]',
+      'button[aria-label="New chat"]',
+      'a[title="New chat"]',
+      'button[title="New chat"]'
+    ],
     notices: [
       '[role="alert"]',
       '[aria-live="assertive"]',
@@ -131,6 +139,11 @@
     }
 
     const candidate = text.replace(/^(?:error|warning|notice)\s*[:–—-]\s*/i, "").trim();
+    const connectionInterrupted = /connection interrupted\.?\s*waiting for the complete answer\.?$/i;
+    if ((source === "notice" && /^connection interrupted\.?\s*waiting for the complete answer\.?$/i.test(candidate)) ||
+        (source === "assistant" && connectionInterrupted.test(candidate))) {
+      return { kind: "connection_interrupted", message: text.slice(-500) };
+    }
     const rules = [
       {
         kind: "account_restriction",
@@ -316,6 +329,53 @@
     return button;
   }
 
+  function newChatControl() {
+    const direct = firstVisible(SELECTORS.newChat);
+    if (direct) return direct;
+    for (const node of document.querySelectorAll?.('a, button') || []) {
+      if (!isVisible(node)) continue;
+      const label = normalizeText(node.getAttribute?.("aria-label") || node.getAttribute?.("title") || node.textContent || "");
+      if (/^new chat$/i.test(label)) return node;
+    }
+    return null;
+  }
+
+  function stopGeneratingBestEffort() {
+    const button = firstVisible(SELECTORS.stop);
+    if (!button || button.disabled || button.getAttribute("aria-disabled") === "true") return false;
+    try { button.click(); return true; } catch { return false; }
+  }
+
+  function isBlankConversationSurface() {
+    return !conversationInfo() && userCount() === 0 && assistantSnapshot().count === 0 && Boolean(composer());
+  }
+
+  async function ensureFreshConversation({ signal, status, requestId = "" }) {
+    if (isBlankConversationSurface()) return true;
+    await status("Opening a blank new chat");
+    const control = newChatControl();
+    if (control) {
+      try { control.click(); } catch { /* use hard navigation fallback below */ }
+      try {
+        await waitUntil(() => isBlankConversationSurface() ? true : null, {
+          timeoutMs: 15000,
+          signal,
+          intervalMs: 250,
+          onWait: () => status("Waiting for the blank new-chat screen")
+        });
+        return true;
+      } catch (error) {
+        if (error?.name === "AbortError") throw error;
+      }
+    }
+
+    const url = new URL("/", location.origin || "https://chatgpt.com");
+    url.searchParams.set("autoprompter_fresh", requestId || `${Date.now()}`);
+    if (typeof location.replace === "function") location.replace(url.href);
+    else location.href = url.href;
+    return false;
+  }
+
   function conversationInfo(value = location.href) {
     try {
       const url = new URL(value, location.href);
@@ -444,7 +504,10 @@
     while (Date.now() - started < timeoutMs) {
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       const interruption = checkInterruption?.();
-      if (interruption) throw new JobInterruption(interruption.kind, interruption.message);
+      if (interruption) {
+        if (interruption.kind === "connection_interrupted") stopGeneratingBestEffort();
+        throw new JobInterruption(interruption.kind, interruption.message);
+      }
       const value = await predicate();
       if (value) return value;
       if (onWait && Date.now() - lastNotice > 1500) {
@@ -480,13 +543,20 @@
 
       const changed = !baseline || snapshotChanged(baseline, snapshot);
       const stable = Date.now() - lastChangedAt >= FALLBACK_STABLE_MS;
+      const responseGuardrail = classifyGuardrailText(snapshot.text, "assistant");
+      if (responseGuardrail?.kind === "connection_interrupted") {
+        stopGeneratingBestEffort();
+        throw new JobInterruption(responseGuardrail.kind, responseGuardrail.message);
+      }
       if (snapshot.count === 0 || generating || !stable) return null;
       if (requireChange && !changed) return null;
 
-      const responseGuardrail = classifyGuardrailText(snapshot.text, "assistant");
       if (responseGuardrail) {
         const mature = matureGuardrail(responseGuardrail, settings);
-        if (shouldHandleInterruption(mature, settings)) throw new JobInterruption(mature.kind, mature.message);
+        if (shouldHandleInterruption(mature, settings)) {
+          if (mature.kind === "connection_interrupted") stopGeneratingBestEffort();
+          throw new JobInterruption(mature.kind, mature.message);
+        }
         if (responseGuardrail.kind === "stalled") return null;
       }
       return snapshot;
@@ -871,7 +941,12 @@
     });
 
     try {
-      if (conversationInfo()) throw new Error("The successor job did not open a blank ChatGPT conversation.");
+      const ready = await ensureFreshConversation({
+        signal,
+        status,
+        requestId: message.freshRequestId || message.jobId
+      });
+      if (!ready) return;
       let baseline = assistantSnapshot();
       const completed = await submitPrompt({
         prompt: message.prompt,
@@ -884,7 +959,11 @@
       });
       baseline = completed;
 
-      const conversation = await waitUntil(() => conversationInfo(), {
+      const conversation = await waitUntil(() => {
+        const info = conversationInfo();
+        if (!info || info.id === message.parentConversationId) return null;
+        return info;
+      }, {
         timeoutMs: 30000,
         signal,
         checkInterruption: () => detectInterruption(message.settings, baseline),
@@ -991,6 +1070,7 @@
       classifyGuardrailText,
       matureGuardrail,
       shouldHandleInterruption,
+      isBlankConversationSurface,
       buildDurableWorkPrompt,
       buildInitializationPrompt,
       extractCheckpointMarker,
