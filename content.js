@@ -144,6 +144,16 @@
         (source === "assistant" && connectionInterrupted.test(candidate))) {
       return { kind: "connection_interrupted", message: text.slice(-500) };
     }
+
+    // ChatGPT's current maximum-length notice differs from the older
+    // "conversation too long" variants. Match the complete platform-shaped
+    // sentence, including straight and curly apostrophes. Assistant matching
+    // also permits the notice to be appended after a partial response.
+    const maximumLengthNotice = /you(?:['’]ve| have) reached the maximum length for this conversation(?:,\s*but you can keep talking by starting a new chat)?\.?$/i;
+    if ((source === "notice" && /^you(?:['’]ve| have) reached the maximum length for this conversation(?:,\s*but you can keep talking by starting a new chat)?(?:[.!]|\s|$)/i.test(candidate)) ||
+        (source === "assistant" && maximumLengthNotice.test(candidate))) {
+      return { kind: "context_limit", message: text.slice(-500) };
+    }
     const rules = [
       {
         kind: "account_restriction",

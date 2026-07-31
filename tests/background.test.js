@@ -6,7 +6,7 @@ const assert = require("node:assert/strict");
 global.chrome = {
   runtime: {
     onMessage: { addListener() {} },
-    getManifest: () => ({ version: "2.6.0" }),
+    getManifest: () => ({ version: "2.7.0" }),
     getURL: value => `chrome-extension://test/${value}`
   },
   action: {},
