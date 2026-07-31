@@ -27,7 +27,8 @@ const {
   buildDurableWorkPrompt,
   buildInitializationPrompt,
   extractCheckpointMarker,
-  extractHandoffMarker
+  extractHandoffMarker,
+  getChatCatalog
 } = require("../content.js");
 
 test("conversation IDs are extracted from chat routes", () => {
@@ -134,4 +135,24 @@ test("automatic circuit breaker can be disabled without disabling continuity int
   assert.equal(shouldHandleInterruption({ kind: "context_limit" }, { circuitBreakerEnabled: false }), true);
   assert.equal(shouldHandleInterruption({ kind: "content_removed" }, { circuitBreakerEnabled: false }), true);
   assert.equal(shouldHandleInterruption({ kind: "stalled" }, { circuitBreakerEnabled: false }), true);
+});
+
+
+test("chat catalog preserves sidebar recency order", () => {
+  const anchors = [
+    { href: "https://chatgpt.com/c/recent", innerText: "Recent work", textContent: "Recent work", getAttribute: () => "" },
+    { href: "https://chatgpt.com/c/older", innerText: "Older work", textContent: "Older work", getAttribute: () => "" }
+  ];
+  const originalQuery = document.querySelectorAll;
+  const originalTitle = document.title;
+  const originalHref = location.href;
+  document.querySelectorAll = selector => selector.includes('/c/') ? anchors : [];
+  document.title = "Recent work | ChatGPT";
+  location.href = "https://chatgpt.com/c/recent";
+  const chats = getChatCatalog();
+  document.querySelectorAll = originalQuery;
+  document.title = originalTitle;
+  location.href = originalHref;
+  assert.deepEqual(chats.slice(0, 2).map(chat => chat.id), ["recent", "older"]);
+  assert.deepEqual(chats.slice(0, 2).map(chat => chat.sidebarIndex), [0, 1]);
 });

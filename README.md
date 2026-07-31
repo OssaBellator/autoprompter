@@ -1,8 +1,13 @@
 # AutoPrompter for ChatGPT
 
-Current release: **2.4.0**
+Current release: **2.5.0**
 
 AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that runs selected ChatGPT conversations concurrently using one inactive managed tab per chat. Each chat independently queues its next follow-up as soon as its current response completes. It can notify you when work prompts complete and, when explicitly configured, create successor chats from verified Git repository checkpoints.
+
+- Chats are displayed in the same most-recent-first order as the ChatGPT sidebar.
+- The ↗ control can start a selected legacy goal in a new chat immediately.
+- Real context-limit interruptions fall back to a best-effort fresh chat when a verified continuity checkpoint cannot be created.
+- While a run is active, the selection UI is replaced by a collapsible progress view containing only the selected chats.
 
 ## Features
 
@@ -14,7 +19,7 @@ AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that runs sele
 - Conservative response-completion and composer-ownership checks.
 - Approximate visible-context monitoring with a configurable capacity and rollover threshold.
 - Optional repository checkpoints before and after work.
-- Automatic successor chats for context exhaustion, verified prolonged stalls, or content-loss signals—but only when a repository checkpoint marker is available.
+- Verified successor chats when a repository checkpoint is available, plus best-effort fresh-chat recovery for actual context-limit failures that occur before a checkpoint can be created.
 - Incremental durability instructions that ask the selected repository tool to commit completed logical units before lengthy or risky work continues.
 - Default-on automatic circuit breaker for rate limits, account restrictions, and safety blocks, with an explicit disable option for false-positive troubleshooting.
 
@@ -33,8 +38,9 @@ AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that runs sele
 2. Scroll the sidebar so the conversations you need are loaded.
 3. Open AutoPrompter and press **Refresh**.
 4. Select the conversations.
-5. Configure the work prompt and limits.
-6. Press **Start all selected**.
+5. For a legacy or already-full conversation, press its **↗** control to start the goal in a new chat immediately.
+6. Configure the work prompt and limits.
+7. Press **Start all selected**. The picker is replaced by a collapsible progress panel containing only the selected chats while the run is active.
 
 The sidebar is virtualized, so the extension can discover only links present in the current page DOM. Repeatedly scroll and refresh to expand the saved local catalog.
 
@@ -91,7 +97,8 @@ ChatGPT does not expose a stable browser API for exact per-conversation context 
 
 AutoPrompter classifies visible interruption messages conservatively:
 
-- **Context limit, prolonged stall, or content removal:** create a successor chat only when continuity is enabled and a verified checkpoint marker exists. Stuck-generation labels documented by OpenAI—`Thinking…`, `Generating…`, and `Working…`—must persist for the configured stall timeout before rollover.
+- **Context limit:** use a verified repository handoff when possible. If the context-limit message arrives before a checkpoint can be created, open a best-effort fresh chat using the selected chat title, configured work prompt, and any repository details. The extension explicitly tells the new chat that it cannot see the old transcript.
+- **Prolonged stall or content removal:** require a verified checkpoint before rollover. Stuck-generation labels—`Thinking…`, `Generating…`, and `Working…`—must persist for the configured stall timeout before rollover.
 - **Suspicious activity, rate limit, temporary account restriction, or safety block:** stop the whole scheduler and notify the user. Documented restriction variants include `We detect suspicious activity.`, `Unusual Activity Detected`, `Unusual activity has been detected from your device. Try again later`, and `Sorry, you have been blocked`.
 - **Missing checkpoint:** stop and request manual review rather than opening a successor with guessed state.
 

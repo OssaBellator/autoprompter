@@ -336,21 +336,27 @@
   }
 
   function getChatCatalog() {
-    const chats = new Map();
+    const chats = [];
+    const indexes = new Map();
     for (const anchor of document.querySelectorAll('a[href*="/c/"]')) {
       const info = conversationInfo(anchor.href);
       if (!info) continue;
       const title = titleForAnchor(anchor);
-      const current = chats.get(info.id);
-      if (!current || current.title === "Untitled chat") chats.set(info.id, { ...info, title });
+      const existingIndex = indexes.get(info.id);
+      if (existingIndex == null) {
+        indexes.set(info.id, chats.length);
+        chats.push({ ...info, title });
+      } else if (chats[existingIndex].title === "Untitled chat" && title !== "Untitled chat") {
+        chats[existingIndex] = { ...chats[existingIndex], title };
+      }
     }
 
     const current = conversationInfo();
-    if (current && !chats.has(current.id)) {
+    if (current && !indexes.has(current.id)) {
       const pageTitle = normalizeText(document.title).replace(/\s*[|–-]\s*ChatGPT.*$/i, "");
-      chats.set(current.id, { ...current, title: pageTitle || "Current chat" });
+      chats.unshift({ ...current, title: pageTitle || "Current chat" });
     }
-    return [...chats.values()].sort((left, right) => left.title.localeCompare(right.title));
+    return chats.map((chat, sidebarIndex) => ({ ...chat, sidebarIndex }));
   }
 
   function snapshotChanged(before, after) {
@@ -730,37 +736,45 @@
             `Estimated context reached ${metrics.percent.toFixed(1)}%, but repository continuity is disabled.`
           );
         }
-        if (message.settings.checkpointBeforePrompt) {
-          const pre = await runCheckpoint({
-            settings: message.settings,
+        try {
+          if (message.settings.checkpointBeforePrompt) {
+            const pre = await runCheckpoint({
+              settings: message.settings,
+              signal,
+              status,
+              phase: "before handoff",
+              baseline,
+              conversationId: message.chat.id
+            });
+            checkpoint = pre.marker;
+            baseline = pre.completed;
+          }
+
+          await status("Preparing repository handoff", metrics);
+          const handoff = await submitPrompt({
+            prompt: buildHandoffPrompt(
+              message.settings,
+              `Configured context threshold ${message.settings.contextThresholdPercent}% reached`,
+              metrics
+            ),
             signal,
             status,
-            phase: "before handoff",
+            settings: message.settings,
             baseline,
-            conversationId: message.chat.id
+            expectedConversationId: message.chat.id
           });
-          checkpoint = pre.marker;
-          baseline = pre.completed;
+          if (/AUTOPROMPTER_HANDOFF_FAILED:/i.test(handoff.text)) {
+            throw new Error("The repository handoff failed.");
+          }
+          checkpoint = extractHandoffMarker(handoff.text) || extractCheckpointMarker(handoff.text);
+          if (!checkpoint) throw new Error("The handoff response did not include a verified repository marker.");
+        } catch (error) {
+          if (error instanceof JobInterruption) throw error;
+          throw new JobInterruption(
+            "context_limit",
+            `The context threshold was reached, but a verified repository handoff could not be created: ${error?.message || error}`
+          );
         }
-
-        await status("Preparing repository handoff", metrics);
-        const handoff = await submitPrompt({
-          prompt: buildHandoffPrompt(
-            message.settings,
-            `Configured context threshold ${message.settings.contextThresholdPercent}% reached`,
-            metrics
-          ),
-          signal,
-          status,
-          settings: message.settings,
-          baseline,
-          expectedConversationId: message.chat.id
-        });
-        if (/AUTOPROMPTER_HANDOFF_FAILED:/i.test(handoff.text)) {
-          throw new Error("The repository handoff failed; no successor chat was opened.");
-        }
-        checkpoint = extractHandoffMarker(handoff.text) || extractCheckpointMarker(handoff.text);
-        if (!checkpoint) throw new Error("The handoff response did not include a verified repository marker.");
         metrics = contextMetrics(message.settings);
         await runtimeMessage({
           type: "JOB_ROLLOVER",
@@ -980,7 +994,8 @@
       buildDurableWorkPrompt,
       buildInitializationPrompt,
       extractCheckpointMarker,
-      extractHandoffMarker
+      extractHandoffMarker,
+      getChatCatalog
     };
   }
 })();

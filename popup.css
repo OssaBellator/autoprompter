@@ -5,6 +5,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { width: 500px; margin: 0; background: Canvas; color: CanvasText; }
 main { padding: 16px; }
 header { margin-bottom: 14px; }
@@ -67,3 +68,17 @@ select { width: 100%; margin-top: 6px; padding: 8px; border: 1px solid color-mix
 .inline-actions { display: flex; gap: 8px; margin-top: 12px; }
 .inline-actions button { flex: 1; }
 .configured-badge { color: #0f766e; font-size: 10px; font-weight: 700; }
+
+.fresh-start-button { width: 28px; height: 28px; padding: 0; border-radius: 999px; font-size: 15px; line-height: 1; color: GrayText; }
+.fresh-start-button.active { background: #0f766e; color: white; border-color: transparent; }
+.fresh-start-badge { color: #8a5a00; font-size: 10px; font-weight: 700; }
+.progress-panel { margin-top: 10px; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 9px; overflow: hidden; }
+.progress-panel summary { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; cursor: pointer; font-weight: 700; background: color-mix(in srgb, CanvasText 5%, transparent); }
+.progress-panel summary small { color: GrayText; font-weight: 600; }
+.progress-list { max-height: 270px; overflow: auto; }
+.progress-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 10px 12px; border-top: 1px solid color-mix(in srgb, CanvasText 10%, transparent); }
+.progress-row:first-child { border-top: 0; }
+.progress-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 650; }
+.progress-meta { display: block; margin-top: 2px; color: GrayText; font-size: 10px; }
+.progress-value { color: GrayText; font-size: 11px; text-align: right; white-space: nowrap; }
+.progress-value.error { color: #d93025; }

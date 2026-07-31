@@ -32,7 +32,8 @@ const elements = Object.fromEntries([
   "checkpointBeforePrompt", "checkpointAfterPrompt", "refresh", "filter", "selectAll", "selectNone",
   "chatList", "catalogHint", "selectionSummary", "start", "initializeContinuity", "stop", "statusDot",
   "statusText", "statusDetail", "chatConfigPanel", "chatConfigChat", "chatPrompt", "chatContinuityMode",
-  "chatRepository", "chatHandoffFile", "chatPluginInstruction", "saveChatConfig", "clearChatConfig"
+  "chatRepository", "chatHandoffFile", "chatPluginInstruction", "saveChatConfig", "clearChatConfig",
+  "selectionControls", "progressPanel", "progressSummary", "progressList"
 ].map(id => [id, document.getElementById(id)]));
 
 let catalog = [];
@@ -43,6 +44,7 @@ let editorOptionKey = "";
 let activeChatEditorId = "";
 let loadingChatEditor = false;
 let chatConfigPersistTimer = null;
+let wasRunning = false;
 
 function isChatGptUrl(value = "") {
   try {
@@ -80,7 +82,8 @@ function formSettings() {
 function fillSettings(settings) {
   const merged = { ...DEFAULTS, ...settings };
   for (const key of ["prompt", "delaySeconds", "maxContinuations", "repository", "handoffFile", "pluginInstruction", "contextCapacityTokens", "contextThresholdPercent", "stallMinutes", "maxRollovers"]) elements[key].value = merged[key];
-  for (const key of ["notificationsEnabled", "notifyOnPromptDone", "disableCircuitBreaker", "continuityEnabled", "checkpointBeforePrompt", "checkpointAfterPrompt"]) elements[key].checked = Boolean(merged[key]);
+  for (const key of ["notificationsEnabled", "notifyOnPromptDone", "continuityEnabled", "checkpointBeforePrompt", "checkpointAfterPrompt"]) elements[key].checked = Boolean(merged[key]);
+  elements.disableCircuitBreaker.checked = merged.circuitBreakerEnabled === false;
   elements.continuityPanel.open = Boolean(merged.continuityEnabled);
   updateFieldAvailability();
 }
@@ -130,12 +133,14 @@ function effectiveSettings(chatId, globalSettings, mode = "work") {
 }
 
 function readChatEditorConfig() {
+  const existing = configFor(activeChatEditorId);
   const config = {
     prompt: elements.chatPrompt.value.trim(),
     continuityMode: elements.chatContinuityMode.value,
     repository: elements.chatRepository.value.trim(),
     handoffFile: elements.chatHandoffFile.value.trim(),
-    pluginInstruction: elements.chatPluginInstruction.value.trim()
+    pluginInstruction: elements.chatPluginInstruction.value.trim(),
+    startInNewChat: existing.startInNewChat === true
   };
   for (const key of Object.keys(config)) if (!config[key] || config[key] === "inherit") delete config[key];
   return config;
@@ -185,6 +190,45 @@ function refreshChatEditorOptions() {
   loadChatEditor();
 }
 
+async function setStartInNewChat(chatId, enabled) {
+  const config = { ...configFor(chatId) };
+  if (enabled) config.startInNewChat = true;
+  else delete config.startInNewChat;
+  if (Object.keys(config).length) chatConfigs[chatId] = config;
+  else delete chatConfigs[chatId];
+  await persistChatConfigs();
+  renderCatalog();
+}
+
+function renderProgressPanel() {
+  const chats = Array.isArray(schedulerState?.chats) ? schedulerState.chats : [];
+  elements.progressList.textContent = "";
+  const completed = chats.filter(chat => chat.failed || chat.retired || chat.status === "Finished" || chat.status === "Initialized").length;
+  const active = chats.filter(chat => chat.currentJobId && !chat.failed).length;
+  elements.progressSummary.textContent = `${completed}/${chats.length} complete · ${active} active`;
+  for (const chat of chats) {
+    const row = document.createElement("div");
+    row.className = "progress-row";
+    const left = document.createElement("div");
+    const title = document.createElement("div");
+    title.className = "progress-title";
+    title.title = chat.title;
+    title.textContent = chat.title;
+    const meta = document.createElement("small");
+    meta.className = "progress-meta";
+    const generation = Number(chat.generation || 0) + 1;
+    const context = Number(chat.contextPercent || 0);
+    meta.textContent = `${chat.status || "Queued"}${generation > 1 ? ` · chat ${generation}` : ""}${context ? ` · context≈${context.toFixed(1)}%` : ""}`;
+    left.append(title, meta);
+    const value = document.createElement("div");
+    value.className = `progress-value${chat.failed ? " error" : ""}`;
+    const limit = Number(chat.settings?.maxContinuations || schedulerState?.settings?.maxContinuations || DEFAULTS.maxContinuations);
+    value.textContent = `${Number(chat.sentCount || 0)}/${limit}`;
+    row.append(left, value);
+    elements.progressList.append(row);
+  }
+}
+
 function updateFieldAvailability() {
   const running = Boolean(schedulerState?.running);
   const continuity = elements.continuityEnabled.checked;
@@ -196,57 +240,76 @@ function updateFieldAvailability() {
 }
 
 function renderCatalog() {
-  const visible = visibleCatalog();
-  elements.chatList.textContent = "";
-  if (!visible.length) {
-    const empty = document.createElement("div");
-    empty.className = "empty";
-    empty.textContent = catalog.length ? "No chats match the filter." : "No chats loaded.";
-    elements.chatList.append(empty);
-  }
+  const running = Boolean(schedulerState?.running);
+  elements.selectionControls.hidden = running;
+  elements.progressPanel.hidden = !running;
 
-  for (const chat of visible) {
-    const row = document.createElement("label");
-    row.className = "chat-row";
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.checked = selectedIds.has(chat.id);
-    checkbox.disabled = Boolean(schedulerState?.running);
-    checkbox.addEventListener("change", async () => {
-      if (checkbox.checked) selectedIds.add(chat.id); else selectedIds.delete(chat.id);
-      await persistSelection();
-      renderCatalog();
-    });
-
-    const titleWrap = document.createElement("span");
-    const title = document.createElement("span");
-    title.className = "chat-title";
-    title.title = chat.title;
-    title.textContent = chat.title;
-    titleWrap.append(title);
-    if (Object.keys(configFor(chat.id)).length) {
-      const badge = document.createElement("span");
-      badge.className = "configured-badge";
-      badge.textContent = "custom settings";
-      titleWrap.append(document.createElement("br"), badge);
+  if (running) {
+    renderProgressPanel();
+  } else {
+    const visible = visibleCatalog();
+    elements.chatList.textContent = "";
+    if (!visible.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = catalog.length ? "No chats match the filter." : "No chats loaded.";
+      elements.chatList.append(empty);
     }
 
-    const runtime = mergedChatState(chat);
-    const progress = document.createElement("span");
-    progress.className = `chat-progress${runtime?.failed ? " error" : ""}`;
-    const context = runtime?.contextPercent ? ` · ctx≈${Number(runtime.contextPercent).toFixed(1)}%` : "";
-    const generation = runtime?.generation ? ` · gen ${runtime.generation + 1}` : "";
-    const limit = runtime?.settings?.maxContinuations || schedulerState?.settings?.maxContinuations || DEFAULTS.maxContinuations;
-    progress.textContent = runtime ? `${runtime.sentCount}/${limit} · ${runtime.status}${context}${generation}` : "";
-    row.append(checkbox, titleWrap, progress);
-    elements.chatList.append(row);
+    for (const chat of visible) {
+      const row = document.createElement("div");
+      row.className = "chat-row";
+      row.setAttribute("role", "option");
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = selectedIds.has(chat.id);
+      checkbox.setAttribute("aria-label", `Select ${chat.title}`);
+      checkbox.addEventListener("change", async () => {
+        if (checkbox.checked) selectedIds.add(chat.id); else selectedIds.delete(chat.id);
+        await persistSelection();
+        renderCatalog();
+      });
+
+      const titleWrap = document.createElement("span");
+      const title = document.createElement("span");
+      title.className = "chat-title";
+      title.title = chat.title;
+      title.textContent = chat.title;
+      titleWrap.append(title);
+      const config = configFor(chat.id);
+      const badges = [];
+      if (Object.keys(config).some(key => key !== "startInNewChat")) badges.push("custom settings");
+      if (config.startInNewChat) badges.push("new chat first");
+      if (badges.length) {
+        const badge = document.createElement("span");
+        badge.className = config.startInNewChat ? "fresh-start-badge" : "configured-badge";
+        badge.textContent = badges.join(" · ");
+        titleWrap.append(document.createElement("br"), badge);
+      }
+
+      const freshStart = document.createElement("button");
+      freshStart.type = "button";
+      freshStart.className = `fresh-start-button${config.startInNewChat ? " active" : ""}`;
+      freshStart.textContent = "↗";
+      freshStart.title = config.startInNewChat
+        ? "Start in the existing chat instead"
+        : "Start this goal in a new chat when the run begins";
+      freshStart.setAttribute("aria-label", freshStart.title);
+      freshStart.setAttribute("aria-pressed", String(Boolean(config.startInNewChat)));
+      freshStart.addEventListener("click", () => setStartInNewChat(chat.id, !config.startInNewChat).catch(error => renderStatus({ ok: false, error: error.message })));
+
+      row.append(checkbox, titleWrap, freshStart);
+      elements.chatList.append(row);
+    }
   }
 
-  elements.selectionSummary.textContent = `${selectedIds.size} selected · ${catalog.length} discovered · max ${MAX_CONCURRENT_CHATS} concurrent`;
-  const running = Boolean(schedulerState?.running);
+  elements.selectionSummary.textContent = running
+    ? `${schedulerState?.chats?.length || 0} selected chats running`
+    : `${selectedIds.size} selected · ${catalog.length} discovered · max ${MAX_CONCURRENT_CHATS} concurrent`;
   elements.start.disabled = running || selectedIds.size === 0;
   elements.initializeContinuity.disabled = running || selectedIds.size === 0;
   elements.stop.disabled = !running;
+  elements.refresh.disabled = running;
   elements.selectAll.disabled = running;
   elements.selectNone.disabled = running;
   refreshChatEditorOptions();
@@ -256,6 +319,8 @@ function renderCatalog() {
 function renderStatus(state) {
   schedulerState = state || null;
   const running = Boolean(state?.running);
+  if (running && !wasRunning) elements.progressPanel.open = true;
+  wasRunning = running;
   const error = Boolean(state?.lastError) || state?.ok === false;
   elements.statusDot.className = `dot${running ? " running" : ""}${error ? " error" : ""}`;
   elements.statusText.textContent = state?.status || state?.error || "Stopped";
@@ -279,16 +344,26 @@ async function refreshCatalog() {
   let response;
   try { response = await chrome.tabs.sendMessage(tab.id, { type: "GET_CHAT_CATALOG" }); }
   catch { throw new Error("Reload the ChatGPT page once after installing the extension."); }
-  const byId = new Map(catalog.map(chat => [chat.id, chat]));
-  for (const chat of response?.chats || []) byId.set(chat.id, chat);
-  catalog = [...byId.values()].sort((left, right) => left.title.localeCompare(right.title));
+  const previousById = new Map(catalog.map(chat => [chat.id, chat]));
+  const observed = Array.isArray(response?.chats) ? response.chats : [];
+  const observedIds = new Set(observed.map(chat => chat.id));
+  const now = Date.now();
+  catalog = [
+    ...observed.map((chat, index) => ({ ...previousById.get(chat.id), ...chat, sidebarIndex: index, lastSeenAt: now })),
+    ...catalog.filter(chat => !observedIds.has(chat.id))
+  ];
   await chrome.storage.local.set({ [CATALOG_KEY]: catalog });
-  elements.catalogHint.textContent = `${response?.chats?.length || 0} chats found in the current page. Scroll the ChatGPT sidebar and refresh again to collect more.`;
+  elements.catalogHint.textContent = `${response?.chats?.length || 0} chats found in current sidebar order (most recent first). Scroll the ChatGPT sidebar and refresh again to collect more.`;
   renderCatalog();
 }
 
 function selectedChats(settings, mode) {
-  return catalog.filter(chat => selectedIds.has(chat.id)).map(chat => ({ ...chat, settings: effectiveSettings(chat.id, settings, mode) }));
+  return catalog.filter(chat => selectedIds.has(chat.id)).map(chat => {
+    const startInNewChat = mode === "work" && configFor(chat.id).startInNewChat === true;
+    const effective = effectiveSettings(chat.id, settings, mode);
+    if (startInNewChat && !effective.repository) effective.continuityEnabled = false;
+    return { ...chat, startInNewChat, settings: effective };
+  });
 }
 
 async function start(mode = "work") {

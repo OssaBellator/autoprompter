@@ -149,6 +149,7 @@ function normalizeChat(chat, baseSettings = DEFAULTS) {
     workerTabId: null,
     currentJobId: null,
     pendingSuccessor: null,
+    startInNewChat: Boolean(chat?.startInNewChat),
     settings: normalizeSettings({ ...baseSettings, ...(chat?.settings || {}) })
   };
 }
@@ -178,6 +179,28 @@ function buildSuccessorPrompt(settings, chat, checkpoint, reason) {
     "Verify the active branch, latest commit, completed work, remaining work, blockers, and next safe task.",
     "Do not reconstruct missing work from guesses and do not repeat completed tasks.",
     "Continue with the next unfinished task, then update the continuity file and commit completed work before finishing."
+  ].filter(Boolean).join("\n");
+}
+
+function buildFreshStartPrompt(settings, chat, reason) {
+  const repository = String(settings?.repository || "").trim();
+  const handoffFile = String(settings?.handoffFile || DEFAULTS.handoffFile).trim();
+  const workPrompt = String(settings?.prompt || DEFAULTS.prompt).trim();
+  const reasonText = String(reason || "the previous conversation cannot safely continue").slice(0, 500);
+  return [
+    "Start a new conversation for a goal that was previously worked on in another ChatGPT chat.",
+    `Previous chat title: ${chat?.title || "Untitled chat"}`,
+    `Reason for starting fresh: ${reasonText}`,
+    "You cannot access the previous chat transcript. Do not claim that you can, and do not invent missing prior decisions.",
+    repository ? `Repository: ${repository}` : "Repository: not configured",
+    repository ? `Continuity file: ${handoffFile}` : "Continuity file: not available",
+    repository ? String(settings?.pluginInstruction || DEFAULTS.pluginInstruction).trim() : "",
+    repository
+      ? "Inspect the repository first. If the continuity file exists, use it. If it is missing, reconstruct only what the repository proves, create the continuity file, and commit it before continuing."
+      : "No verified repository handoff is available. Use only the explicit work instruction below and ask for any essential missing facts instead of guessing.",
+    "",
+    "Work instruction:",
+    workPrompt
   ].filter(Boolean).join("\n");
 }
 
@@ -331,16 +354,21 @@ async function stopScheduler(reason = "Stopped", error = "", closeWorkers = true
 async function saveSuccessorToCatalog(chat, parentId = "") {
   const stored = await chrome.storage.local.get([CATALOG_KEY, SELECTION_KEY, CHAT_CONFIGS_KEY]);
   const catalog = Array.isArray(stored[CATALOG_KEY]) ? stored[CATALOG_KEY] : [];
-  const byId = new Map(catalog.map(item => [item.id, item]));
-  byId.set(chat.id, { id: chat.id, title: chat.title, url: chat.url });
+  const successorEntry = { id: chat.id, title: chat.title, url: chat.url, lastSeenAt: Date.now() };
+  const nextCatalog = [successorEntry, ...catalog.filter(item => item.id !== chat.id)];
   const selected = new Set(Array.isArray(stored[SELECTION_KEY]) ? stored[SELECTION_KEY] : []);
+  if (parentId) selected.delete(parentId);
   selected.add(chat.id);
   const configs = stored[CHAT_CONFIGS_KEY] && typeof stored[CHAT_CONFIGS_KEY] === "object"
     ? { ...stored[CHAT_CONFIGS_KEY] }
     : {};
-  if (parentId && configs[parentId] && !configs[chat.id]) configs[chat.id] = { ...configs[parentId] };
+  if (parentId && configs[parentId] && !configs[chat.id]) {
+    const inherited = { ...configs[parentId] };
+    delete inherited.startInNewChat;
+    if (Object.keys(inherited).length) configs[chat.id] = inherited;
+  }
   await chrome.storage.local.set({
-    [CATALOG_KEY]: [...byId.values()].sort((left, right) => left.title.localeCompare(right.title)),
+    [CATALOG_KEY]: nextCatalog,
     [SELECTION_KEY]: [...selected],
     [CHAT_CONFIGS_KEY]: configs
   });
@@ -482,10 +510,27 @@ async function launchAllWorkers(state) {
   const indexes = eligibleChatIndexes(state.chats, state.settings.maxContinuations);
   for (const index of indexes) {
     const chat = state.chats[index];
-    chat.currentJobId = `${state.token}:${chat.chainId}:1:${Date.now()}:${index}`;
-    chat.pendingSuccessor = null;
-    chat.status = "Opening worker";
     chat.lastError = "";
+    if (state.mode === "work" && chat.startInNewChat) {
+      const reason = "This chat was marked to start in a new conversation before work begins.";
+      chat.currentJobId = `${state.token}:fresh:${chat.chainId}:1:${Date.now()}:${index}`;
+      const resumeSettings = chat.settings || state.settings;
+      chat.pendingSuccessor = {
+        parentChat: { ...chat, startInNewChat: false, pendingSuccessor: null },
+        checkpoint: "",
+        reason,
+        prompt: buildFreshStartPrompt(resumeSettings, chat, reason),
+        settings: { ...resumeSettings, checkpointAfterPrompt: false },
+        resumeSettings,
+        kind: "forced_start",
+        verified: false
+      };
+      chat.status = "Opening new chat";
+    } else {
+      chat.currentJobId = `${state.token}:${chat.chainId}:1:${Date.now()}:${index}`;
+      chat.pendingSuccessor = null;
+      chat.status = "Opening worker";
+    }
   }
   updateOverallStatus(state, `Opening ${indexes.length} chats concurrently`);
   await saveState(state);
@@ -512,7 +557,8 @@ async function launchAllWorkers(state) {
     .map(async index => {
       const chat = state.chats[index];
       try {
-        await chrome.tabs.update(chat.workerTabId, { url: chat.url, active: false });
+        const targetUrl = chat.pendingSuccessor ? NEW_CHAT_URL : chat.url;
+        await chrome.tabs.update(chat.workerTabId, { url: targetUrl, active: false });
       } catch (error) {
         const tabId = chat.workerTabId;
         chat.workerTabId = null;
@@ -643,30 +689,41 @@ async function beginSuccessor(state, index, message) {
   const checkpoint = String(message.checkpoint || chat.lastCheckpoint || "").slice(0, 200);
   const reason = String(message.reason || message.message || "Continuity rollover requested.").slice(0, 500);
   const rolloverCount = Number(chat.rolloverCount || 0) + 1;
-  if (!chatSettings.continuityEnabled || !chatSettings.repository) {
+  const kind = String(message.kind || "unknown");
+  const verified = Boolean(chatSettings.continuityEnabled && chatSettings.repository && checkpoint);
+  const bestEffortAllowed = Boolean(message.forceFreshStart || kind === "context_limit");
+
+  if (!verified && !bestEffortAllowed) {
     return failChatWorker(state, index, `Continuity handoff required: ${reason}`);
-  }
-  if (!checkpoint) {
-    return failChatWorker(state, index, `${reason} No verified repository checkpoint was available, so no successor chat was opened.`);
   }
   if (rolloverCount > chatSettings.maxRollovers) {
     return failChatWorker(state, index, `The chat reached the configured limit of ${chatSettings.maxRollovers} successor chats.`);
   }
 
-  chat.status = "Creating successor";
+  chat.status = verified ? "Creating verified successor" : "Creating best-effort successor";
   chat.lastCheckpoint = checkpoint;
   chat.rolloverCount = rolloverCount;
   chat.currentJobId = `${state.token}:successor:${chat.chainId}:${rolloverCount}:${Date.now()}`;
   chat.pendingSuccessor = {
-    parentChat: { ...chat, pendingSuccessor: null },
+    parentChat: { ...chat, startInNewChat: false, pendingSuccessor: null },
     checkpoint,
     reason,
-    prompt: buildSuccessorPrompt(chatSettings, chat, checkpoint, reason),
-    settings: chatSettings
+    prompt: verified
+      ? buildSuccessorPrompt(chatSettings, chat, checkpoint, reason)
+      : buildFreshStartPrompt(chatSettings, chat, reason),
+    settings: verified ? chatSettings : { ...chatSettings, checkpointAfterPrompt: false },
+    resumeSettings: chatSettings,
+    kind: verified ? "verified_handoff" : "best_effort",
+    verified
   };
-  updateOverallStatus(state, `Creating successor for ${chat.title}`);
+  updateOverallStatus(state, `${chat.status} for ${chat.title}`);
   await saveState(state);
-  await notify(state, `Creating successor: ${chat.title}`, `${reason} · checkpoint ${checkpoint}`, `rollover-${chat.id}`);
+  await notify(
+    state,
+    verified ? `Creating successor: ${chat.title}` : `Creating fresh chat: ${chat.title}`,
+    verified ? `${reason} · checkpoint ${checkpoint}` : `${reason} · no verified handoff was available`,
+    `rollover-${chat.id}`
+  );
 
   let tab = null;
   if (Number.isInteger(chat.workerTabId)) {
@@ -702,7 +759,7 @@ async function interruptJob(message, sender) {
   const reason = String(message.message || "ChatGPT interrupted the job.").slice(0, 500);
 
   if (["context_limit", "stalled", "content_removed"].includes(kind)) {
-    return beginSuccessor(state, index, { ...message, reason });
+    return beginSuccessor(state, index, { ...message, kind, reason });
   }
 
   // A restriction in any managed tab stops the entire concurrent run unless the
@@ -746,7 +803,8 @@ async function successorCreated(message, sender) {
     workerTabId: current.workerTabId,
     currentJobId: null,
     pendingSuccessor: null,
-    settings: current.settings || parent.settings || state.settings
+    startInNewChat: false,
+    settings: pending.resumeSettings || current.settings || parent.settings || state.settings
   };
 
   state.handoffHistory = [...(state.handoffHistory || []), {
@@ -756,13 +814,18 @@ async function successorCreated(message, sender) {
     successorId: successor.id,
     checkpoint: pending.checkpoint,
     reason: pending.reason,
+    kind: pending.kind || "successor",
+    verified: Boolean(pending.verified),
     at: Date.now()
   }].slice(-50);
   state.chats[index] = successor;
   updateOverallStatus(state, `Successor created for ${parent.title}`);
   await saveState(state);
   await saveSuccessorToCatalog(successor, parent.id);
-  await notify(state, "Successor chat ready", `${successor.title} · checkpoint ${successor.lastCheckpoint}`, `successor-${successor.id}`);
+  const successorDetail = successor.lastCheckpoint
+    ? `${successor.title} · checkpoint ${successor.lastCheckpoint}`
+    : `${successor.title} · best-effort fresh start`;
+  await notify(state, "Successor chat ready", successorDetail, `successor-${successor.id}`);
 
   if (!isChatEligible(state, successor)) {
     const tabId = successor.workerTabId;
@@ -847,6 +910,7 @@ if (typeof module !== "undefined") {
     nextEligibleIndex,
     eligibleChatIndexes,
     isChatEligible,
-    buildSuccessorPrompt
+    buildSuccessorPrompt,
+    buildFreshStartPrompt
   };
 }

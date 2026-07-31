@@ -18,7 +18,7 @@ function clone(value) {
 
 global.chrome = {
   runtime: {
-    getManifest: () => ({ version: "2.4.0" }),
+    getManifest: () => ({ version: "2.5.0" }),
     onMessage: { addListener(listener) { runtimeListener = listener; } }
   },
   storage: {
@@ -73,6 +73,16 @@ global.chrome = {
 
 require("../background.js");
 
+function resetHarness() {
+  for (const key of Object.keys(sessionStore)) delete sessionStore[key];
+  for (const key of Object.keys(localStore)) delete localStore[key];
+  tabs.clear();
+  sentMessages.length = 0;
+  createdTabs.length = 0;
+  removedTabs.length = 0;
+  nextTabId = 100;
+}
+
 function dispatch(message, sender = {}) {
   return new Promise((resolve, reject) => {
     const handled = runtimeListener(message, sender, response => resolve(response));
@@ -81,6 +91,7 @@ function dispatch(message, sender = {}) {
 }
 
 test("selected chats run concurrently and the fastest chat advances independently", async () => {
+  resetHarness();
   const chats = ["alpha", "beta", "gamma"].map(id => ({
     id,
     title: id,
@@ -132,4 +143,58 @@ test("selected chats run concurrently and the fastest chat advances independentl
   const betaJobs = sentMessages.filter(item => item.tabId === fastest.workerTabId && item.message.type === "RUN_CHAT_JOB");
   assert.equal(betaJobs.length, 2);
   assert.equal(removedTabs.length, 0);
+});
+
+
+test("a selected legacy chat can start directly in a new conversation", async () => {
+  resetHarness();
+  const started = await dispatch({
+    scope: "AUTOPROMPTER_RUNTIME",
+    type: "START_SCHEDULER",
+    chats: [{
+      id: "legacy",
+      title: "Legacy project",
+      url: "https://chatgpt.com/c/legacy",
+      startInNewChat: true,
+      settings: { prompt: "Continue the legacy goal", maxContinuations: 2 }
+    }],
+    settings: { delaySeconds: 5, maxContinuations: 2 },
+    mode: "work"
+  });
+  const chat = started.chats[0];
+  assert.equal(tabs.get(chat.workerTabId).url, "https://chatgpt.com/");
+  assert.equal(chat.pendingSuccessor.kind, "forced_start");
+
+  await dispatch({ scope: "AUTOPROMPTER_RUNTIME", type: "CONTENT_READY" }, { tab: { id: chat.workerTabId } });
+  const job = sentMessages.find(item => item.message.type === "RUN_SUCCESSOR_JOB");
+  assert.ok(job);
+  assert.match(job.message.prompt, /cannot access the previous chat transcript/i);
+  assert.match(job.message.prompt, /Continue the legacy goal/);
+  assert.equal(job.message.settings.checkpointAfterPrompt, false);
+});
+
+test("an unverified context-limit interruption opens a best-effort successor", async () => {
+  resetHarness();
+  const started = await dispatch({
+    scope: "AUTOPROMPTER_RUNTIME",
+    type: "START_SCHEDULER",
+    chats: [{ id: "full", title: "Full chat", url: "https://chatgpt.com/c/full", settings: { prompt: "Continue", maxContinuations: 2 } }],
+    settings: { delaySeconds: 5, maxContinuations: 2, continuityEnabled: false },
+    mode: "work"
+  });
+  const before = clone(sessionStore.autoprompterScheduler);
+  const chat = before.chats[0];
+  await dispatch({
+    scope: "AUTOPROMPTER_RUNTIME",
+    type: "JOB_INTERRUPTED",
+    token: before.token,
+    jobId: chat.currentJobId,
+    kind: "context_limit",
+    message: "This conversation is too long."
+  }, { tab: { id: chat.workerTabId } });
+  const state = clone(sessionStore.autoprompterScheduler);
+  assert.equal(state.running, true);
+  assert.equal(state.chats[0].failed, false);
+  assert.equal(state.chats[0].pendingSuccessor.kind, "best_effort");
+  assert.equal(tabs.get(state.chats[0].workerTabId).url, "https://chatgpt.com/");
 });
