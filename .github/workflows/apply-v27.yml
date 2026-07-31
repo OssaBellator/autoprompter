@@ -19,28 +19,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Fetch and verify patch blob
+      - name: Reconstruct and verify patch
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PATCH_BLOB_SHA: 42293fc08ba9f3f8edf7f31c181617e09dd66358
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import base64, json, os, urllib.request
-          sha = os.environ['PATCH_BLOB_SHA']
-          req = urllib.request.Request(
-              f"https://api.github.com/repos/OssaBellator/autoprompter/git/blobs/{sha}",
-              headers={
-                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-                  "Accept": "application/vnd.github+json",
-                  "X-GitHub-Api-Version": "2022-11-28",
-              },
-          )
-          with urllib.request.urlopen(req) as response:
-              payload = json.load(response)
-          open('/tmp/autoprompter-v27.patch.gz', 'wb').write(base64.b64decode(payload['content']))
-          PY
+          cat > /tmp/autoprompter-v27.patch.gz.b64 <<'B64'
+          H4sIAAAAAAAAA+1Z3XLTSBa+3jzFGS81xLElO84QE1NZoICi2IIpCjK7NQWzpC217Z7IkuhuOXhCqniIvdkX2AfjSfY73ZKtOInzsxR7s7lIbHX36fPzne+co8RqNKJAFz/T3SCQn6KkiOX+VviHyu9Sx07zjsh7ux1R2CzX2TS3UnfePHv89NWzcBpTZ5raTiysOLMhmPXCfnCc6aPl1o0gCK6U96det7cbdPvBzjZ1e4Pe3qDXDbvVD7X490ar1brBvSsid3YHvZ2we39vt9/fvrdXinz0iILt9i61ttv36dGjDfozPYbc16VcGmWankyEff76YIM2gieF1jK1pGUihZED2trqhbthd2tro3XhWt+vbbQCeiqtjKypxH398i9DUXlmKj6paTENEpmO7YTSzKpIkkhjynKZGhI0lMYGcgR9LJkiiqQxUE3OZErHE/xKM1ycZ0bZTM8pmsjoKM8URMtPylgTQvuzlimW+kpFOjPZyNKzeCypA+WwroopvRKpGuFO+tsORFgoobKULHQnXUAjAysjK+PKHIqydCa1ERb7DH8rbUvmVBiVjilLJalURFbNJAxOxRinrRhSDm0iSAnpmYgm7iM2xhKWx17Ax0IW0pCC91Iog6gkSXYcFDkJaJJBMeFXo0UMTA41JPSY5gkcb0J6YSkSqfPtaE7zrPCOY9CQx5FZbGfXt/26/JQnKlKsBowaqXGhJdYiLQX2LUPBahsaQRDBD2qkYN1zZS+OiosHY2+v3+5Ta28Pvxl9KzGKEmEMizI0U0YNE/YgFnSRs5tpiqvhRuduI/VMsG+T+YChGgB/TzLshr8SNVV2sLWFSMC0pX413SawOAMfOJvx1N0Gp40Qc3ajExQ4QdW1JLTGfQbYBCxZcA127OqhLN0EfzGOV2A8QpTKcHuE8E0LXLnnFn6X7Zrj6+FquwQR6bxuRyytUAnCfQBhS+DWomhlkhh3VyqPy2sc5JzSgAd0kG49SwBQLVITaZXbkJP4W/iUNYsdGQA2KnW8a+jw16wAJyA34DI4MnYqlMRAJTEwHdmJMmeyrU3DwjpAs9OPpMyRVskRe3Q4J2OFtvxZLOwND/8f13pcqYxrCg1Z6CLHZMwBNqgz7lztOY1lKrVzvw+v8NvYoTpLHLvOoLAYsp2WdzgS431iKgOnHm9WaeGleNvpWNlJVjABwsVTmbrQVbQUB5WbxvAxnPFGWs3sIBCmSOQ5FHNmayk9J0SFo1thrWSCK20FwSRZyvwLdCQJMX0xEhxzTrOZSNhuLT8WSp8Bdw0IJTg0UzHWQ3pri+goqPkFxsvEfP3yz8ODiUoZj1+//PuwTYfPyz3VAw734d9hWfkER6YFSg8Kg0HxKlEv63Dxels1veysVV28lW8LkwMbWQH/cNVRdt4mzazt4I6wwCeZFkCXiKKs8HUDDo18VuFWI0bSzmmYZNHRGSgcTzKQseE8LRIwNZtQVhZeBifAI0+zqOAQOlZYCKaZ0EqgBlS5D9srQkA9OadzyC77JS1MIRJ6XD4suwkZ1xerEyAeTl5gLi53+boEitB4NENvgTxis8dCcZwA6yoMbzOt4SZmk4kAcpwYZz/uCjfim/eMJbLC383Vzdty77qucblrpcfb3ht0792ubbxU5pq+8aefXOeIP9u7rnxXP5sGnkYDt7+/Tw0u4YBrahv044+M4ZJmXizZJESDYjfBUrGCjrLZbNJJJU1LW+iUTgjZEQ+osRTwocZHjXbF3gNiRg8NaFFuBve63SadPvDCTrkR5Q+dTtW23b2qB+WAIw09gErylHohplEvRGSzjJhYGguMh2gkLZo6n75lc5UDcUjYaWAmApS1EGY4V9IIhOkzg6kPaSPUeGIdOqEqiF6gKIBk8wl3dY8r70J/XIQjC3EiMRlzyJQ7Q1cXvEk24wrGbIn+EoQ54lZLUM51EllU9Y6hF8Q0unDOS+ebn72cfeogTTYfDt7dReH+bSY/u5Rp3riAQ0T7vdm6YRVvPnwfPrzTUQ+8nmpEm2dw5611oOv843+rKF8d/vDb5/fm851mR52DO33+7I24InkuiMKFqdO6NHU4Nz44+r8qY1o+Y2iJAQ2mN4j6uyo1T5YZX95Q1pEPNbpvtG9DmtNy/AIfIa+uZK8z29dR55mNq+zZH9zr344914ldN3j3efD2o49zZqMS9IExx94b0E7braRom/Ctcdl4Dj8H2LY813CTOR63Vh/33WMWisbb9YDl0psiBWgiZsNrjLXcqqH/5RXQhut6fV/ncsC0F30aN5sRJ0i7avm4SKtUMd+oP8om3rUPKvI3+Wo8LoSOL5wpTFhaMIUYpMSHiAd3WXNbY7vbK/c4DjT83GDh3W3wmMMApMo14VjfvQ6N9X3fDoxrpF75Emi3hsUKcfVrboWyHOMUuAmPrS7khchzr1+WY83Id+SL0lwkVnls1XC5nB0cEj0AHfYYxNwIzx2KlugJhoL7uHMg8qowOE5uAw6mYNNh2WMN+vPtzLX6vctOrgPNZWdWAXR/0OvdDkDXvOFyMO0yse2WxDZOsqFIQp+gKB8OXBpVAsPLoKohWfqqKkYnJOL4JaoeT0mbKGendOpQRxg6bfVebkBY2v8LbZ5QiboFFum02fbl6+r9/Wo/lft/efNygO4twaiK3Yde62CBzEHHeadz58TtOT3kg6fuuHDlDvqf3qrieacvQR8shqubwmmdjKuBte70t4bYDe5aw1z3XRm9v3iFeBXgvguULgV0Un4AsCulqjXoWq0+oFPffHlsYe7WXpY3ea/rbHZ/qsHLZkcSmvh3AaH7VuryezZ8ge7Mvfoq/f1XflQuX9wdejctWsTGwWozzO94qoEnbHgvLbf/mhV3v8u7vIb3ErxpxZCdrSpTGWhSHwhYyt5suinQt7IQZBkaEZSXm0a65uCtZcfVAfu2AqU/i2ZcahvKj4VINp2IEBFMXWPDlQ27/pvEd/P3zXO9fuxa6V0/8O1eIFxH/Jok7m+3d4Bo/Ol1F5C+bNjnVQ4JxxQjvRuBGpfM8VDODdKYR8ZjnuRLnC/elmEQ8vns5iaPD/kJbA58fEcYu4nrDMLK/37Mn3MXrIVKDqD2plOtvRhvmyGnb3s1fZvnxZXj/IVCG9/x5XvjnPJesxUL+OENrTh8Xb7CEKk5Bp2Wr0XZFCczpDsnzn2nh+36aP2N1Wi4f3CU7z49VX4sMsuvqc+BU2imD+9aoFgxlZ7VrVQrLZKk0oVh/x8yIrOAvR4AAA==
+          B64
+          tr -d '[:space:]' < /tmp/autoprompter-v27.patch.gz.b64 | base64 -d > /tmp/autoprompter-v27.patch.gz
           echo "7b2693684c68b9d5459a171e79fdadd49df8da7318bc558308e1f009c1b25eff  /tmp/autoprompter-v27.patch.gz" | sha256sum -c -
           gzip -dc /tmp/autoprompter-v27.patch.gz > /tmp/autoprompter-v27.patch
           echo "deac0773cff1fd45024eea956cca5d4b55a0763e66ed41ce6c67aab902a3c6ea  /tmp/autoprompter-v27.patch" | sha256sum -c -
