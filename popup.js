@@ -37,7 +37,9 @@ const elements = Object.fromEntries([
   "projectModePanel", "projectSelect", "inspectProject", "projectStatusCard", "projectStatusTitle",
   "projectStatusBadge", "projectStatusMeta", "projectInspectOutput", "pauseProject", "resumeProject",
   "cancelProject", "projectTitle", "projectGoal", "projectRepository", "projectPlannerChat",
-  "projectReviewerChat", "projectIntegratorChat", "projectWorkerHint", "createProject", "projectMessage"
+  "projectReviewerChat", "projectIntegratorChat", "projectWorkerHint", "createProject", "projectMessage",
+  "plannerWorkbench", "buildPlannerPrompt", "plannerPromptOutput", "plannerResponseInput",
+  "validatePlannerOutput", "approveProjectPlan", "discardProjectPlan", "plannerPlanSummary"
 ].map(id => [id, document.getElementById(id)]));
 
 let catalog = [];
@@ -49,7 +51,10 @@ let activeChatEditorId = "";
 let loadingChatEditor = false;
 let chatConfigPersistTimer = null;
 let wasRunning = false;
-let projectState = { projects: [], activeProjectId: null, project: null, events: [] };
+let projectState = {
+  projects: [], activeProjectId: null, project: null, events: [],
+  pendingPlan: null, approvedPlan: null, tasks: {}, plannerPromptProjectId: ""
+};
 
 function isChatGptUrl(value = "") {
   try {
@@ -176,8 +181,20 @@ function renderProjectState() {
     elements.pauseProject.disabled = true;
     elements.resumeProject.disabled = true;
     elements.cancelProject.disabled = true;
+    elements.plannerWorkbench.hidden = true;
     return;
   }
+  const tasks = projectState.tasks && typeof projectState.tasks === "object" ? projectState.tasks : {};
+  const pendingSummary = projectState.pendingPlan ? {
+    revision: projectState.pendingPlan.revision,
+    phases: projectState.pendingPlan.phases.length,
+    tasks: projectState.pendingPlan.tasks.length,
+    criticalPath: projectState.pendingPlan.criticalPath
+  } : null;
+  const approvedSummary = projectState.approvedPlan ? {
+    revision: projectState.approvedPlan.revision,
+    tasks: projectState.approvedPlan.tasks.length
+  } : null;
   elements.projectStatusTitle.textContent = project.title;
   elements.projectStatusBadge.textContent = project.status;
   elements.projectStatusMeta.textContent = `${project.projectId} · ${project.repository.slug} · ${project.roles.workerChatIds.length} worker chat${project.roles.workerChatIds.length === 1 ? "" : "s"}`;
@@ -185,11 +202,31 @@ function renderProjectState() {
     goal: project.goal,
     roles: project.roles,
     scheduler: project.scheduler,
+    pendingPlan: pendingSummary,
+    approvedPlan: approvedSummary,
+    taskStatusCounts: Object.values(tasks).reduce((counts, task) => {
+      counts[task.status] = (counts[task.status] || 0) + 1;
+      return counts;
+    }, {}),
     recentEvents: (projectState.events || []).slice(-5)
   }, null, 2);
   elements.pauseProject.disabled = !["draft", "planning", "ready", "running"].includes(project.status);
   elements.resumeProject.disabled = project.status !== "paused";
   elements.cancelProject.disabled = ["completed", "failed", "cancelled"].includes(project.status);
+
+  const terminal = ["completed", "failed", "cancelled"].includes(project.status);
+  const planningBlocked = terminal || project.status === "paused";
+  elements.plannerWorkbench.hidden = false;
+  elements.buildPlannerPrompt.disabled = planningBlocked || Boolean(projectState.approvedPlan);
+  elements.validatePlannerOutput.disabled = planningBlocked || Boolean(projectState.approvedPlan) || !elements.plannerResponseInput.value.trim();
+  elements.approveProjectPlan.disabled = planningBlocked || !projectState.pendingPlan || Boolean(projectState.approvedPlan);
+  elements.discardProjectPlan.disabled = !projectState.pendingPlan;
+  elements.plannerPlanSummary.textContent = JSON.stringify({
+    pending: pendingSummary,
+    approved: approvedSummary,
+    taskRecordsCreated: Object.keys(tasks).length,
+    approvalRequiredBeforeTaskCreation: !projectState.approvedPlan
+  }, null, 2);
 }
 
 async function refreshProjects({ inspectActive = true } = {}) {
@@ -201,6 +238,9 @@ async function refreshProjects({ inspectActive = true } = {}) {
   else {
     projectState.project = null;
     projectState.events = [];
+    projectState.pendingPlan = null;
+    projectState.approvedPlan = null;
+    projectState.tasks = {};
     renderProjectState();
   }
 }
@@ -209,6 +249,9 @@ async function inspectProject(projectId = elements.projectSelect.value) {
   if (!projectId) {
     projectState.project = null;
     projectState.events = [];
+    projectState.pendingPlan = null;
+    projectState.approvedPlan = null;
+    projectState.tasks = {};
     renderProjectState();
     return;
   }
@@ -217,6 +260,13 @@ async function inspectProject(projectId = elements.projectSelect.value) {
   projectState.activeProjectId = response.activeProjectId || projectId;
   projectState.project = response.project;
   projectState.events = response.events || [];
+  projectState.pendingPlan = response.pendingPlan || null;
+  projectState.approvedPlan = response.approvedPlan || null;
+  projectState.tasks = response.tasks || {};
+  if (projectState.plannerPromptProjectId && projectState.plannerPromptProjectId !== projectId) {
+    elements.plannerPromptOutput.value = "";
+    projectState.plannerPromptProjectId = "";
+  }
   renderProjectState();
 }
 
@@ -242,6 +292,61 @@ async function createProjectDraft() {
   elements.projectSelect.value = response.project.projectId;
   elements.projectMessage.textContent = `Created ${response.project.projectId}. No chats were dispatched.`;
   await inspectProject(response.project.projectId);
+}
+
+async function generatePlannerPrompt() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) throw new Error("Choose a project first.");
+  const response = await runtimeMessage("BUILD_PLANNER_PROMPT", { projectId });
+  if (response.ok === false) throw new Error(response.error || "Could not generate planner prompt.");
+  elements.plannerPromptOutput.value = response.prompt;
+  projectState.plannerPromptProjectId = projectId;
+  elements.projectMessage.textContent = `Planner revision ${response.revision} prompt generated. Copy it to the assigned planner chat; no chat was dispatched.`;
+  renderProjectState();
+}
+
+async function validatePlannerResponse() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) throw new Error("Choose a project first.");
+  const output = elements.plannerResponseInput.value.trim();
+  if (!output) throw new Error("Paste the planner envelope first.");
+  const response = await runtimeMessage("SUBMIT_PLANNER_OUTPUT", { projectId, output });
+  if (response.ok === false) throw new Error(response.error || "Planner output validation failed.");
+  projectState.projects = response.projects || projectState.projects;
+  projectState.project = response.project;
+  projectState.pendingPlan = response.pendingPlan;
+  projectState.approvedPlan = null;
+  projectState.tasks = {};
+  elements.projectMessage.textContent = `Plan revision ${response.planSummary.revision} validated with ${response.planSummary.taskCount} tasks. No task records exist until approval.`;
+  await inspectProject(projectId);
+}
+
+async function approvePendingProjectPlan() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) throw new Error("Choose a project first.");
+  const response = await runtimeMessage("APPROVE_PROJECT_PLAN", { projectId });
+  if (response.ok === false) throw new Error(response.error || "Plan approval failed.");
+  projectState.projects = response.projects || projectState.projects;
+  projectState.project = response.project;
+  projectState.pendingPlan = null;
+  projectState.approvedPlan = response.approvedPlan;
+  projectState.tasks = response.tasks || {};
+  elements.projectMessage.textContent = `Approved revision ${response.planSummary.revision}; ${Object.keys(projectState.tasks).length} task records created. Worker dispatch is still disabled.`;
+  await inspectProject(projectId);
+}
+
+async function discardPendingProjectPlan() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) throw new Error("Choose a project first.");
+  const response = await runtimeMessage("DISCARD_PROJECT_PLAN", { projectId });
+  if (response.ok === false) throw new Error(response.error || "Could not discard pending plan.");
+  projectState.projects = response.projects || projectState.projects;
+  projectState.project = response.project;
+  projectState.pendingPlan = null;
+  projectState.approvedPlan = response.approvedPlan || null;
+  projectState.tasks = response.tasks || {};
+  elements.projectMessage.textContent = "Pending plan discarded. No task records were created.";
+  await inspectProject(projectId);
 }
 
 async function transitionProject(type) {
@@ -590,6 +695,11 @@ elements.projectSelect.addEventListener("change", () => inspectProject().catch(e
 elements.pauseProject.addEventListener("click", () => transitionProject("PAUSE_PROJECT").catch(error => { elements.projectMessage.textContent = error.message; }));
 elements.resumeProject.addEventListener("click", () => transitionProject("RESUME_PROJECT").catch(error => { elements.projectMessage.textContent = error.message; }));
 elements.cancelProject.addEventListener("click", () => transitionProject("CANCEL_PROJECT").catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.buildPlannerPrompt.addEventListener("click", () => generatePlannerPrompt().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.validatePlannerOutput.addEventListener("click", () => validatePlannerResponse().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.approveProjectPlan.addEventListener("click", () => approvePendingProjectPlan().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.discardProjectPlan.addEventListener("click", () => discardPendingProjectPlan().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.plannerResponseInput.addEventListener("input", renderProjectState);
 for (const select of projectRoleSelects()) select.addEventListener("change", updateProjectWorkerHint);
 for (const input of [elements.prompt, elements.delaySeconds, elements.maxContinuations, elements.notifyOnPromptDone, elements.repository, elements.handoffFile, elements.pluginInstruction, elements.contextCapacityTokens, elements.contextThresholdPercent, elements.stallMinutes, elements.maxRollovers, elements.checkpointBeforePrompt, elements.checkpointAfterPrompt]) input.addEventListener("change", () => saveSettings().catch(() => {}));
 for (const input of [elements.chatPrompt, elements.chatContinuityMode, elements.chatRepository, elements.chatHandoffFile, elements.chatPluginInstruction]) {

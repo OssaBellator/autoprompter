@@ -1,6 +1,7 @@
 "use strict";
 
-if (typeof importScripts === "function") importScripts("project-store.js");
+if (typeof importScripts === "function") importScripts("planner-protocol.js", "project-store.js");
+const PlannerProtocol = globalThis.AutoPrompterPlannerProtocol || (typeof require === "function" ? require("./planner-protocol.js") : null);
 const ProjectStore = globalThis.AutoPrompterProjectStore || (typeof require === "function" ? require("./project-store.js") : null);
 
 const MESSAGE_SCOPE = "AUTOPROMPTER_RUNTIME";
@@ -338,7 +339,10 @@ async function inspectProjectState(projectId) {
     projectStoreVersion: result.store.schemaVersion,
     activeProjectId: result.store.activeProjectId,
     project: result.project,
-    events: result.events
+    events: result.events,
+    pendingPlan: result.pendingPlan,
+    approvedPlan: result.approvedPlan,
+    tasks: result.tasks
   };
 }
 
@@ -351,6 +355,64 @@ async function transitionProjectState(projectId, action) {
     activeProjectId: result.store.activeProjectId,
     projects: ProjectStore.listProjects(result.store),
     project: result.project
+  };
+}
+
+async function buildPlannerPromptState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.buildProjectPlannerPrompt(store, projectId);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.project.projectId,
+    project: result.project,
+    revision: result.revision,
+    prompt: result.prompt
+  };
+}
+
+async function submitPlannerOutputState(projectId, output) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.submitProjectPlannerOutput(store, projectId, output);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    pendingPlan: result.pendingPlan,
+    planSummary: result.summary,
+    tasks: {}
+  };
+}
+
+async function approvePlannerPlanState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.approveProjectPlan(store, projectId);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    pendingPlan: null,
+    approvedPlan: result.approvedPlan,
+    planSummary: result.summary,
+    tasks: result.tasks
+  };
+}
+
+async function discardPlannerPlanState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.discardProjectPlan(store, projectId);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    pendingPlan: null,
+    approvedPlan: result.store.approvedPlansByProject[projectId] || null,
+    tasks: result.store.tasksByProject[projectId] || {}
   };
 }
 
@@ -1102,6 +1164,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return transitionProjectState(message.projectId, "resume");
       case "CANCEL_PROJECT":
         return transitionProjectState(message.projectId, "cancel");
+      case "BUILD_PLANNER_PROMPT":
+        return buildPlannerPromptState(message.projectId);
+      case "SUBMIT_PLANNER_OUTPUT":
+        return submitPlannerOutputState(message.projectId, message.output);
+      case "APPROVE_PROJECT_PLAN":
+        return approvePlannerPlanState(message.projectId);
+      case "DISCARD_PROJECT_PLAN":
+        return discardPlannerPlanState(message.projectId);
       case "CONTENT_READY": {
         const state = await loadState();
         const index = findChatIndexByTab(state, sender.tab?.id);
@@ -1172,6 +1242,7 @@ if (typeof module !== "undefined") {
     CONNECTION_RETRY_PROMPT,
     MAX_CONNECTION_RETRIES,
     INITIAL_BATCH_GRACE_MS,
+    PlannerProtocol,
     ProjectStore
   };
 }

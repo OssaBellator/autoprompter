@@ -92,3 +92,21 @@ select { width: 100%; margin-top: 6px; padding: 8px; border: 1px solid color-mix
 .project-status-card pre { max-height: 150px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 9px 0 0; padding: 8px; border-radius: 6px; background: color-mix(in srgb, CanvasText 6%, transparent); font-size: 10px; line-height: 1.35; }
 .project-status-badge { display: inline-block; margin-top: 5px; padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, #0f766e 16%, transparent); color: #0f766e; font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .03em; }
 .project-create { width: 100%; margin-top: 12px; }
+
+.planner-workbench {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.planner-workbench textarea {
+  min-height: 110px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.planner-workbench pre {
+  max-height: 180px;
+}

@@ -22,18 +22,49 @@
     {
       "id": "task-project-schema",
       "title": "Define durable project protocol schemas",
+      "description": "Create the first version of the project, plan, task, and worker-result contracts used by ChatGPT Web planner and worker sessions.",
       "dependencies": [],
       "role": "documentation",
       "difficulty": "medium",
-      "preferredModelClass": "deep"
+      "preferredModelClass": "deep",
+      "allowedPaths": [
+        "schemas/**",
+        "docs/**",
+        "examples/sample-project/**"
+      ],
+      "acceptanceCriteria": [
+        "Every contract has an explicit schemaVersion.",
+        "Unknown fields are rejected by default.",
+        "Task paths cannot be absolute or contain parent traversal.",
+        "Model routing is expressed as capability classes rather than hard-coded model IDs."
+      ],
+      "verificationCommands": [
+        "npm test"
+      ]
     },
     {
       "id": "task-protocol-tests",
       "title": "Add protocol invariant tests",
-      "dependencies": ["task-project-schema"],
+      "description": "Validate the example project graph and core safety invariants without introducing a runtime dependency.",
+      "dependencies": [
+        "task-project-schema"
+      ],
       "role": "testing",
       "difficulty": "medium",
-      "preferredModelClass": "standard"
+      "preferredModelClass": "standard",
+      "allowedPaths": [
+        "tests/project-protocol.test.js",
+        "examples/sample-project/**"
+      ],
+      "acceptanceCriteria": [
+        "Duplicate task identifiers are rejected.",
+        "Unknown and cyclic dependencies are rejected.",
+        "Unsafe allowed paths are rejected.",
+        "Worker chat assignments are unique."
+      ],
+      "verificationCommands": [
+        "npm test"
+      ]
     }
   ],
   "criticalPath": [

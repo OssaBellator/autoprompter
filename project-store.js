@@ -1,18 +1,21 @@
 "use strict";
 
 (function attachProjectStore(root, factory) {
-  const api = factory();
+  const plannerProtocol = root.AutoPrompterPlannerProtocol
+    || (typeof require === "function" ? require("./planner-protocol.js") : null);
+  const api = factory(plannerProtocol);
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.AutoPrompterProjectStore = api;
-})(typeof globalThis !== "undefined" ? globalThis : self, () => {
+})(typeof globalThis !== "undefined" ? globalThis : self, PlannerProtocol => {
   const PROJECTS_KEY = "autoprompterProjects";
-  const STORE_SCHEMA_VERSION = "1.0";
+  const STORE_SCHEMA_VERSION = "1.1";
   const PROJECT_SCHEMA_VERSION = "1.0";
   const MAX_PROJECT_EVENTS = 200;
   const ACTIVE_STATUSES = new Set(["draft", "planning", "ready", "running"]);
   const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
   const APPROVAL_ACTIONS = [
     "merge_to_default_branch",
+    "delete_branch",
     "publish_release",
     "modify_workflow",
     "change_permissions",
@@ -90,6 +93,9 @@
       activeProjectId: null,
       projects: {},
       resumeStatusByProject: {},
+      pendingPlansByProject: {},
+      approvedPlansByProject: {},
+      tasksByProject: {},
       events: []
     };
   }
@@ -147,7 +153,7 @@
 
   function migrateStore(raw) {
     if (!raw) return { store: emptyStore(), migrated: true };
-    if (raw.schemaVersion === STORE_SCHEMA_VERSION && raw.projects && !Array.isArray(raw.projects)) {
+    if ([STORE_SCHEMA_VERSION, "1.0"].includes(raw.schemaVersion) && raw.projects && !Array.isArray(raw.projects)) {
       const store = emptyStore();
       for (const [id, project] of Object.entries(raw.projects)) {
         const normalized = normalizeStoredProject(project);
@@ -157,8 +163,23 @@
       store.resumeStatusByProject = raw.resumeStatusByProject && typeof raw.resumeStatusByProject === "object"
         ? Object.fromEntries(Object.entries(raw.resumeStatusByProject).filter(([id, status]) => store.projects[id] && ACTIVE_STATUSES.has(status)))
         : {};
+      if (raw.schemaVersion === STORE_SCHEMA_VERSION && PlannerProtocol) {
+        for (const [projectId, plan] of Object.entries(raw.pendingPlansByProject || {})) {
+          const project = store.projects[projectId];
+          if (!project) continue;
+          try { store.pendingPlansByProject[projectId] = PlannerProtocol.validatePlan(plan, project, plan.revision); } catch { /* discard invalid stored plans */ }
+        }
+        for (const [projectId, plan] of Object.entries(raw.approvedPlansByProject || {})) {
+          const project = store.projects[projectId];
+          if (!project) continue;
+          try { store.approvedPlansByProject[projectId] = PlannerProtocol.validatePlan(plan, project, plan.revision); } catch { /* discard invalid stored plans */ }
+        }
+        for (const [projectId, tasks] of Object.entries(raw.tasksByProject || {})) {
+          if (store.projects[projectId] && tasks && typeof tasks === "object" && !Array.isArray(tasks)) store.tasksByProject[projectId] = clone(tasks);
+        }
+      }
       store.events = Array.isArray(raw.events) ? raw.events.slice(-MAX_PROJECT_EVENTS) : [];
-      return { store, migrated: JSON.stringify(store) !== JSON.stringify(raw) };
+      return { store, migrated: raw.schemaVersion !== STORE_SCHEMA_VERSION || JSON.stringify(store) !== JSON.stringify(raw) };
     }
     if (raw.schemaVersion === "0.1" && Array.isArray(raw.projects)) {
       const store = emptyStore();
@@ -238,12 +259,104 @@
     return { store, project: clone(project) };
   }
 
+  function requirePlannerProtocol() {
+    if (!PlannerProtocol) throw new Error("Planner protocol is unavailable.");
+    return PlannerProtocol;
+  }
+
+  function selectedProject(store, projectId = "") {
+    const id = String(projectId || store.activeProjectId || "");
+    const project = store.projects[id];
+    if (!project) throw new Error("Project not found.");
+    return { id, project };
+  }
+
+  function nextPlanRevision(store, projectId) {
+    return Number(store.approvedPlansByProject[projectId]?.revision || 0) + 1;
+  }
+
+  function buildProjectPlannerPrompt(storeInput, projectId = "") {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    if (TERMINAL_STATUSES.has(project.status)) throw new Error(`Cannot plan a ${project.status} project.`);
+    if (project.status === "paused") throw new Error("Resume the project before planning.");
+    if (store.approvedPlansByProject[id] || Object.keys(store.tasksByProject[id] || {}).length) {
+      throw new Error("This milestone supports only the first approved plan. Plan revisions are not enabled yet.");
+    }
+    const revision = nextPlanRevision(store, id);
+    return { store, project: clone(project), revision, prompt: requirePlannerProtocol().buildPlannerPrompt(project, revision) };
+  }
+
+  function submitProjectPlannerOutput(storeInput, projectId, output, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    if (TERMINAL_STATUSES.has(project.status)) throw new Error(`Cannot plan a ${project.status} project.`);
+    if (project.status === "paused") throw new Error("Resume the project before submitting a plan.");
+    if (store.approvedPlansByProject[id] || Object.keys(store.tasksByProject[id] || {}).length) {
+      throw new Error("An approved plan already exists. Plan revisions are not enabled yet.");
+    }
+    const protocol = requirePlannerProtocol();
+    const revision = nextPlanRevision(store, id);
+    const plan = protocol.validatePlan(protocol.parsePlannerEnvelope(output), project, revision);
+    const at = nowIso(clock);
+    store.pendingPlansByProject[id] = plan;
+    project.status = "planning";
+    project.updatedAt = at;
+    store.activeProjectId = id;
+    appendEvent(store, "plan_validated", id, at, `Revision ${plan.revision} validated with ${plan.tasks.length} tasks; approval required`);
+    return { store, project: clone(project), pendingPlan: clone(plan), summary: protocol.summarizePlan(plan) };
+  }
+
+  function approveProjectPlan(storeInput, projectId, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    if (TERMINAL_STATUSES.has(project.status)) throw new Error(`Cannot approve a plan for a ${project.status} project.`);
+    if (project.status === "paused") throw new Error("Resume the project before approving its plan.");
+    const plan = store.pendingPlansByProject[id];
+    if (!plan) throw new Error("No validated pending plan is available for approval.");
+    if (store.approvedPlansByProject[id] || Object.keys(store.tasksByProject[id] || {}).length) {
+      throw new Error("An approved plan or task records already exist.");
+    }
+    const protocol = requirePlannerProtocol();
+    const canonical = protocol.validatePlan(plan, project, nextPlanRevision(store, id));
+    const at = nowIso(clock);
+    const tasks = protocol.buildTaskRecords(canonical, project, clock);
+    store.approvedPlansByProject[id] = canonical;
+    store.tasksByProject[id] = tasks;
+    delete store.pendingPlansByProject[id];
+    project.status = "ready";
+    project.updatedAt = at;
+    store.activeProjectId = id;
+    appendEvent(store, "plan_approved", id, at, `Revision ${canonical.revision} approved; ${Object.keys(tasks).length} task records created`);
+    return { store, project: clone(project), approvedPlan: clone(canonical), tasks: clone(tasks), summary: protocol.summarizePlan(canonical) };
+  }
+
+  function discardProjectPlan(storeInput, projectId, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    if (!store.pendingPlansByProject[id]) throw new Error("No pending plan is available to discard.");
+    delete store.pendingPlansByProject[id];
+    if (project.status === "planning") project.status = "draft";
+    const at = nowIso(clock);
+    project.updatedAt = at;
+    store.activeProjectId = id;
+    appendEvent(store, "plan_discarded", id, at, "Pending planner output discarded before task creation");
+    return { store, project: clone(project) };
+  }
+
   function inspectProject(storeInput, projectId = "") {
     const store = clone(storeInput);
     const id = String(projectId || store.activeProjectId || "");
     const project = store.projects[id];
     if (!project) throw new Error("Project not found.");
-    return { store, project: clone(project), events: store.events.filter(event => event.projectId === id) };
+    return {
+      store,
+      project: clone(project),
+      events: store.events.filter(event => event.projectId === id),
+      pendingPlan: clone(store.pendingPlansByProject[id] || null),
+      approvedPlan: clone(store.approvedPlansByProject[id] || null),
+      tasks: clone(store.tasksByProject[id] || {})
+    };
   }
 
   function transitionProject(storeInput, projectId, action, clock = Date.now) {
@@ -296,6 +409,11 @@
     createProject,
     inspectProject,
     transitionProject,
-    listProjects
+    listProjects,
+    nextPlanRevision,
+    buildProjectPlannerPrompt,
+    submitProjectPlannerOutput,
+    approveProjectPlan,
+    discardProjectPlan
   };
 });

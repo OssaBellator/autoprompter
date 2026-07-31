@@ -104,9 +104,9 @@
     </details>
 
     <details id="projectModePanel" class="continuity project-mode">
-      <summary>Project Mode preview</summary>
+      <summary>Project Mode foundation</summary>
       <div class="details-body">
-        <p class="hint">Create and inspect durable multi-agent project state. This preview does not dispatch planner, worker, reviewer, or integrator chats.</p>
+        <p class="hint">Create durable project state, validate a planner envelope, and explicitly approve task creation. This foundation does not dispatch planner, worker, reviewer, or integrator chats.</p>
 
         <div class="project-toolbar">
           <label>
@@ -128,6 +128,26 @@
             <button id="resumeProject" class="compact" type="button">Resume</button>
             <button id="cancelProject" class="compact" type="button">Cancel</button>
           </div>
+
+          <section id="plannerWorkbench" class="planner-workbench">
+            <strong>Planner output approval</strong>
+            <p class="hint">Generate a bounded prompt, paste it into the assigned planner chat, then paste the planner's exact envelope below. AutoPrompter validates and stores it, but creates no task records until you approve it.</p>
+            <button id="buildPlannerPrompt" class="compact" type="button">Generate planner prompt</button>
+            <label>
+              Planner prompt
+              <textarea id="plannerPromptOutput" rows="8" readonly placeholder="Generate a prompt for the assigned planner chat"></textarea>
+            </label>
+            <label>
+              Planner response
+              <textarea id="plannerResponseInput" rows="8" maxlength="120000" placeholder="AUTOPROMPTER_PLAN_BEGIN&#10;{ ... }&#10;AUTOPROMPTER_PLAN_END"></textarea>
+            </label>
+            <div class="inline-actions">
+              <button id="validatePlannerOutput" class="compact" type="button">Validate pending plan</button>
+              <button id="approveProjectPlan" class="compact" type="button">Approve and create tasks</button>
+              <button id="discardProjectPlan" class="compact" type="button">Discard pending plan</button>
+            </div>
+            <pre id="plannerPlanSummary"></pre>
+          </section>
         </div>
 
         <label>

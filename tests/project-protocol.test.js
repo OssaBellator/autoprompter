@@ -105,6 +105,10 @@ test("sample task files match the plan and use safe allowlisted paths", () => {
     assert.equal(task.projectId, plan.projectId);
     assert.equal(task.role, summary.role);
     assert.equal(task.preferredModelClass, summary.preferredModelClass);
+    assert.equal(task.description, summary.description);
+    assert.deepEqual(task.allowedPaths, summary.allowedPaths);
+    assert.deepEqual(task.acceptanceCriteria, summary.acceptanceCriteria);
+    assert.deepEqual(task.verificationCommands, summary.verificationCommands);
     assert.notEqual(task.dependencies.includes(task.id), true);
     for (const allowedPath of task.allowedPaths) assertSafeRelativePath(allowedPath);
   }

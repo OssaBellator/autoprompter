@@ -31,13 +31,20 @@ test("chat discovery preserves sidebar order instead of alphabetizing", () => {
 });
 
 
-test("Project Mode preview exposes non-dispatching lifecycle controls", () => {
+test("Project Mode foundation exposes lifecycle and approval-gated planner controls", () => {
   assert.match(popupHtml, /id="projectModePanel"/);
   assert.match(popupHtml, /id="createProject"/);
-  assert.match(popupHtml, /This preview does not dispatch planner, worker, reviewer, or integrator chats/);
+  assert.match(popupHtml, /does not dispatch planner, worker, reviewer, or integrator chats/);
   assert.match(popupJs, /runtimeMessage\("CREATE_PROJECT"/);
   assert.match(popupJs, /runtimeMessage\("INSPECT_PROJECT"/);
   assert.match(popupJs, /transitionProject\("PAUSE_PROJECT"\)/);
   assert.match(popupJs, /transitionProject\("RESUME_PROJECT"\)/);
   assert.match(popupJs, /transitionProject\("CANCEL_PROJECT"\)/);
+  assert.match(popupHtml, /id="buildPlannerPrompt"/);
+  assert.match(popupHtml, /id="plannerResponseInput"/);
+  assert.match(popupHtml, /id="approveProjectPlan"/);
+  assert.match(popupJs, /runtimeMessage\("BUILD_PLANNER_PROMPT"/);
+  assert.match(popupJs, /runtimeMessage\("SUBMIT_PLANNER_OUTPUT"/);
+  assert.match(popupJs, /runtimeMessage\("APPROVE_PROJECT_PLAN"/);
+  assert.match(popupJs, /No task records exist until approval/);
 });

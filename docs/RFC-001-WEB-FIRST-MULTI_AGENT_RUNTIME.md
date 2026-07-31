@@ -161,6 +161,7 @@ The extension cannot read an authoritative remaining-message counter. It may mai
 The project schema lists actions requiring explicit user approval. The initial default set includes:
 
 - merge to the default branch;
+- delete a branch;
 - publish a release;
 - modify workflows;
 - change permissions;
@@ -201,9 +202,15 @@ Implementation status: complete on the Project Mode development branch.
 
 ### Milestone 3 — planner parsing
 
-- Send a bounded planning prompt to a selected planner chat.
-- Parse delimited plan JSON.
-- Validate the graph and require user approval before task creation.
+Implementation status: complete on the Project Mode development branch.
+
+- Generate a bounded planning prompt for the selected planner chat without dispatching it automatically.
+- Parse exactly one `AUTOPROMPTER_PLAN_BEGIN` / `AUTOPROMPTER_PLAN_END` JSON envelope.
+- Reject unknown fields, duplicate IDs, unknown dependencies, cycles, unsafe paths, destructive verification commands, and tasks assigned to multiple phases.
+- Store a validated plan as pending while the project remains in `planning`.
+- Create no task records until the user explicitly approves the pending plan.
+- Materialize approved tasks as `ready` or `blocked` records, then move the project to `ready`.
+- Keep live planner and worker dispatch disabled in this milestone.
 
 ### Milestone 4 — worker leases and dispatch
 

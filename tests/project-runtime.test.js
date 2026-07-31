@@ -68,13 +68,58 @@ function projectInput() {
   };
 }
 
+
+function plannerOutput(projectId) {
+  return `AUTOPROMPTER_PLAN_BEGIN\n${JSON.stringify({
+    schemaVersion: "1.0",
+    projectId,
+    revision: 1,
+    requiresMultipleAgents: true,
+    rationale: "The project has separate implementation and test tasks.",
+    phases: [{
+      id: "phase-foundation",
+      title: "Foundation",
+      taskIds: ["task-store", "task-tests"],
+      acceptanceCriteria: ["The phase passes validation."]
+    }],
+    tasks: [
+      {
+        id: "task-store",
+        title: "Implement store",
+        description: "Implement durable project storage.",
+        dependencies: [],
+        role: "implementation",
+        difficulty: "medium",
+        preferredModelClass: "standard",
+        allowedPaths: ["project-store.js"],
+        acceptanceCriteria: ["The store persists."],
+        verificationCommands: ["npm test"]
+      },
+      {
+        id: "task-tests",
+        title: "Test store",
+        description: "Add deterministic tests.",
+        dependencies: ["task-store"],
+        role: "testing",
+        difficulty: "small",
+        preferredModelClass: "fast",
+        allowedPaths: ["tests/**"],
+        acceptanceCriteria: ["Tests pass."],
+        verificationCommands: ["npm test"]
+      }
+    ],
+    criticalPath: ["task-store", "task-tests"],
+    createdAt: "2026-07-31T05:00:00Z"
+  })}\nAUTOPROMPTER_PLAN_END`;
+}
+
 test("GET_PROJECTS initializes and persists the current store schema", async () => {
   resetHarness();
   const response = await dispatch("GET_PROJECTS");
   assert.equal(response.ok, true);
-  assert.equal(response.projectStoreVersion, "1.0");
+  assert.equal(response.projectStoreVersion, "1.1");
   assert.deepEqual(response.projects, []);
-  assert.equal(localStore.autoprompterProjects.schemaVersion, "1.0");
+  assert.equal(localStore.autoprompterProjects.schemaVersion, "1.1");
 });
 
 test("project lifecycle commands persist deterministic transitions", async () => {
@@ -115,4 +160,50 @@ test("invalid project commands fail without corrupting storage", async () => {
   assert.equal(response.ok, false);
   assert.match(response.error, /valid GitHub repository/i);
   assert.deepEqual(localStore.autoprompterProjects.projects, {});
+});
+
+
+test("planner runtime validates pending output before explicit approval creates tasks", async () => {
+  resetHarness();
+  const created = await dispatch("CREATE_PROJECT", { project: projectInput() });
+  const projectId = created.project.projectId;
+
+  const prompt = await dispatch("BUILD_PLANNER_PROMPT", { projectId });
+  assert.equal(prompt.ok, true);
+  assert.equal(prompt.revision, 1);
+  assert.match(prompt.prompt, /AUTOPROMPTER_PLAN_BEGIN/);
+
+  const submitted = await dispatch("SUBMIT_PLANNER_OUTPUT", { projectId, output: plannerOutput(projectId) });
+  assert.equal(submitted.ok, true);
+  assert.equal(submitted.project.status, "planning");
+  assert.equal(submitted.planSummary.taskCount, 2);
+  assert.deepEqual(submitted.tasks, {});
+  assert.deepEqual(localStore.autoprompterProjects.tasksByProject, {});
+
+  const inspectedPending = await dispatch("INSPECT_PROJECT", { projectId });
+  assert.equal(inspectedPending.pendingPlan.revision, 1);
+  assert.equal(inspectedPending.approvedPlan, null);
+  assert.deepEqual(inspectedPending.tasks, {});
+
+  const approved = await dispatch("APPROVE_PROJECT_PLAN", { projectId });
+  assert.equal(approved.ok, true);
+  assert.equal(approved.project.status, "ready");
+  assert.equal(approved.tasks["task-store"].status, "ready");
+  assert.equal(approved.tasks["task-tests"].status, "blocked");
+
+  const inspectedApproved = await dispatch("INSPECT_PROJECT", { projectId });
+  assert.equal(inspectedApproved.pendingPlan, null);
+  assert.equal(inspectedApproved.approvedPlan.revision, 1);
+  assert.equal(Object.keys(inspectedApproved.tasks).length, 2);
+});
+
+test("planner output can be discarded without task creation", async () => {
+  resetHarness();
+  const created = await dispatch("CREATE_PROJECT", { project: projectInput() });
+  const projectId = created.project.projectId;
+  await dispatch("SUBMIT_PLANNER_OUTPUT", { projectId, output: plannerOutput(projectId) });
+  const discarded = await dispatch("DISCARD_PROJECT_PLAN", { projectId });
+  assert.equal(discarded.ok, true);
+  assert.equal(discarded.project.status, "draft");
+  assert.deepEqual(discarded.tasks, {});
 });
