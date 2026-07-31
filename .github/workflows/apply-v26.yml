@@ -23,6 +23,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          PATCH_BLOB_SHA: b3425aefa7058f81adfc88dc06f08afffad7a5ec
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -38,15 +39,13 @@ jobs:
           )
           with urllib.request.urlopen(req) as response:
               payload = json.load(response)
-          open('/tmp/autoprompter-v26.patch.gz', 'wb').write(base64.b64decode(payload['content']))
+          open('/tmp/autoprompter-v26.patch.xz', 'wb').write(base64.b64decode(payload['content']))
           PY
-          echo "7678bc990f7fa319674198a42fa296f062664e2890aa7f11d871ebf733b397e7  /tmp/autoprompter-v26.patch.gz" | sha256sum -c -
-          gzip -dc /tmp/autoprompter-v26.patch.gz > /tmp/autoprompter-v26.patch
+          echo "df83396768ad3f42f75fe87729c9bdcbdfc0f06d39c00011e0d7eabcc8b779ea  /tmp/autoprompter-v26.patch.xz" | sha256sum -c -
+          xz -dc /tmp/autoprompter-v26.patch.xz > /tmp/autoprompter-v26.patch
           echo "1e6225eb722d526dec601fcb0b169dcb87f9d05526a1dc396927dfb2786d4a3b  /tmp/autoprompter-v26.patch" | sha256sum -c -
           git apply --check /tmp/autoprompter-v26.patch
           git apply /tmp/autoprompter-v26.patch
-        env:
-          PATCH_BLOB_SHA: PLACEHOLDER
       - name: Validate release
         shell: bash
         run: |
@@ -65,7 +64,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -f .github/workflows/apply-v26.yml .github/v26.ready
+          rm -rf .release-v26 .github/workflows/apply-v26.yml .github/v26.ready
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
