@@ -1,6 +1,6 @@
 {
   "name": "autoprompter",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "private": true,
   "description": "Edge extension for concurrent multi-chat ChatGPT continuation with fresh-start recovery, current maximum-length rollover, and repository-backed handoffs.",
   "scripts": {

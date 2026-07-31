@@ -1,10 +1,10 @@
 # AutoPrompter for ChatGPT
 
-Current release: **2.7.0**
+Current release: **2.8.0**
 
 - Detects ChatGPT’s current maximum-length notice and opens a best-effort successor even when no repository checkpoint exists.
 
-AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that runs selected ChatGPT conversations concurrently using one inactive managed tab per chat. Each chat independently queues its next follow-up as soon as its current response completes. It can notify you when work prompts complete and, when explicitly configured, create successor chats from verified Git repository checkpoints.
+AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that runs selected ChatGPT conversations concurrently using one inactive managed tab per chat. Initial workers synchronize at a readiness barrier and receive zero-delay jobs together, avoiding independent background-tab delay timers that can drift under browser throttling. Each chat independently queues its next follow-up as soon as its current response completes. It can notify you when work prompts complete and, when explicitly configured, create successor chats from verified Git repository checkpoints.
 
 - Chats are displayed in the same most-recent-first order as the ChatGPT sidebar.
 - The ↗ control can start a selected legacy goal in a new chat immediately.
@@ -15,7 +15,8 @@ AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that runs sele
 
 - Discover chats currently loaded in the ChatGPT sidebar.
 - Launch up to 12 selected conversations concurrently, using one isolated inactive managed tab per chat.
-- Queue each chat's next follow-up immediately when that chat completes, without waiting for slower chats.
+- Submit the initial selected-chat batch together after all worker pages report ready; later follow-ups still advance independently as each chat completes.
+- Apply the configured delay between follow-ups, not before the first concurrent batch.
 - Configurable work prompt, delay, and per-goal work-prompt limit.
 - Browser notifications for prompt completion, scheduler completion, errors, and handoffs.
 - Conservative response-completion and composer-ownership checks.
@@ -60,7 +61,7 @@ Restriction detection is intentionally exact and UI-scoped. Normal assistant pro
 
 AutoPrompter opens one inactive managed tab for every selected chat, up to 12 chats per run. Initial prompts are launched together. Afterward, each chat advances independently: whichever response finishes first receives its next follow-up first, while slower chats continue working without blocking the queue.
 
-Concurrent prompting can consume account allowances faster and can make rate-limit notices more likely. Use a conservative delay, keep the selected batch small, and leave the automatic circuit breaker enabled unless false positives require disabling it. Inactive tabs may also be throttled by the browser.
+Initial prompts are dispatched together after a readiness barrier. A slow worker is released after a five-second grace period so it cannot block the whole batch. Concurrent prompting can consume account allowances faster and can make rate-limit notices more likely. Use a conservative delay, keep the selected batch small, and leave the automatic circuit breaker enabled unless false positives require disabling it. Inactive tabs may also be throttled by the browser.
 
 ## Notifications
 
