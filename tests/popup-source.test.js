@@ -1,0 +1,31 @@
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const root = path.join(__dirname, "..");
+const popupJs = fs.readFileSync(path.join(root, "popup.js"), "utf8");
+const popupHtml = fs.readFileSync(path.join(root, "popup.html"), "utf8");
+const contentJs = fs.readFileSync(path.join(root, "content.js"), "utf8");
+
+test("running view uses a selected-chat progress dropdown", () => {
+  assert.match(popupHtml, /id="progressPanel"/);
+  assert.match(popupHtml, /id="progressList"/);
+  assert.match(popupJs, /selectionControls\.hidden = running/);
+  assert.match(popupJs, /progressPanel\.hidden = !running/);
+  assert.match(popupJs, /schedulerState\?\.chats/);
+});
+
+test("fresh-start control persists per-chat state", () => {
+  assert.match(popupJs, /fresh-start-button/);
+  assert.match(popupJs, /startInNewChat/);
+  assert.match(popupJs, /persistChatConfigs\(\)/);
+});
+
+test("chat discovery preserves sidebar order instead of alphabetizing", () => {
+  assert.doesNotMatch(contentJs, /getChatCatalog[\s\S]{0,1200}localeCompare/);
+  assert.doesNotMatch(popupJs, /catalog\s*=\s*\[\.\.\.byId\.values\(\)\]\.sort/);
+  assert.match(popupJs, /observed\.map\(\(chat, index\)/);
+});
