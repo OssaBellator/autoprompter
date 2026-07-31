@@ -1,0 +1,74 @@
+name: Apply AutoPrompter 2.7
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'agent/maximum-length-successor'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/maximum-length-successor
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Fetch and verify patch blob
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PATCH_BLOB_SHA: 42293fc08ba9f3f8edf7f31c181617e09dd66358
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64, json, os, urllib.request
+          sha = os.environ['PATCH_BLOB_SHA']
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/OssaBellator/autoprompter/git/blobs/{sha}",
+              headers={
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(req) as response:
+              payload = json.load(response)
+          open('/tmp/autoprompter-v27.patch.gz', 'wb').write(base64.b64decode(payload['content']))
+          PY
+          echo "7b2693684c68b9d5459a171e79fdadd49df8da7318bc558308e1f009c1b25eff  /tmp/autoprompter-v27.patch.gz" | sha256sum -c -
+          gzip -dc /tmp/autoprompter-v27.patch.gz > /tmp/autoprompter-v27.patch
+          echo "deac0773cff1fd45024eea956cca5d4b55a0763e66ed41ce6c67aab902a3c6ea  /tmp/autoprompter-v27.patch" | sha256sum -c -
+          git apply --check /tmp/autoprompter-v27.patch
+          git apply /tmp/autoprompter-v27.patch
+      - name: Validate release
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm test
+          npm run check
+          python -m json.tool manifest.json >/dev/null
+          python -m json.tool package.json >/dev/null
+          git diff --check
+          test "$(git hash-object content.js)" = "c048687cad8b05c86f226f6c1e03d4cdd0aec99d"
+          test "$(git hash-object manifest.json)" = "83f53d586c772b0746a0e30d7266b2436adb3a71"
+          test "$(git hash-object package.json)" = "f5eed198a2c919350699bffe6c8685a25b5cc188"
+          test "$(git hash-object README.md)" = "fc4b683343a2d88094c6a7ae535ee2e2e98563cc"
+          test "$(git hash-object tests/content.test.js)" = "1d85d5dec7dad7e6b319a93bf68dd2efbebd5d97"
+          test "$(git hash-object tests/concurrent-scheduler.test.js)" = "0ad034775c5bc7ac4a950bbbed68a4abbe101dec"
+          test "$(git hash-object tests/background.test.js)" = "898011b9c35217f53cce2544b707d168129165e0"
+      - name: Commit validated release
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/apply-v27.yml .github/v27.ready
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Release AutoPrompter 2.7 with current maximum-length rollover"
+          git push origin HEAD:agent/maximum-length-successor
