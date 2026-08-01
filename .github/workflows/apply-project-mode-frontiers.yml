@@ -91,7 +91,7 @@ jobs:
           new = '''    count = text.count(old)
               if label == "popup inspect frontier assignment" and count == 2:
                   return text.replace(old, new)
-              if label == "status safety and next" and count == 0:
+              if label in {"status safety and next", "README project mode summary"} and count == 0:
                   return text
               if count != 1:
                   raise RuntimeError(f"{label}: expected exactly one match, found {count}")
@@ -128,6 +128,18 @@ jobs:
           if old not in text:
               raise SystemExit('current status section did not match')
           path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          readme_path = Path('README.md')
+          readme = readme_path.read_text(encoding='utf-8')
+          old_summary = '- Draft Project Mode foundation on the development branch: versioned local project storage, fixed planner/reviewer/integrator roles, strict planner-envelope validation, approval-gated task creation, deterministic worker leases, bounded local assignment preparation, restart recovery, and an audit trail. Prepared worker prompts remain local and are not sent automatically.'
+          new_summary = '- Draft Project Mode on the development branch: strict planner/result/reviewer/integration envelopes, deterministic worker leases, bounded revisions, dependency progression, explicit completion approval, and opt-in ChatGPT Web worker dispatch after manual model verification. It does not automate model selection or merge/publish actions.'
+          if old_summary not in readme:
+              raise SystemExit('current README Project Mode summary did not match')
+          readme = readme.replace(old_summary, new_summary, 1)
+          old_interruption = '- **Connection interrupted:** stop the interrupted generation when a stop control is available, then queue a same-chat continuation prompt without incrementing completed-work progress. Retries are capped at three consecutive attempts.'
+          new_interruption = '- **Recoverable generation interruption:** for `Connection interrupted. Waiting for the complete answer` and the non-selectable `Our systems are thinking a bit more... retry with a faster model` overlay, stop the current generation when possible and queue a same-chat continuation prompt without incrementing completed-work progress. Retries are capped at three consecutive attempts.'
+          if old_interruption not in readme:
+              raise SystemExit('current README interruption bullet did not match')
+          readme_path.write_text(readme.replace(old_interruption, new_interruption, 1), encoding='utf-8')
           PY
           git apply --check .m5/overlay-recovery.patch
           git apply .m5/overlay-recovery.patch
