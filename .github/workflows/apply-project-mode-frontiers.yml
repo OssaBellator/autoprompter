@@ -113,7 +113,12 @@ jobs:
           '''
           if previous_status not in text:
               raise SystemExit('status publication needle did not match')
-          path.write_text(text.replace(previous_status, current_status, 1), encoding='utf-8')
+          text = text.replace(previous_status, current_status, 1)
+          previous_readme = '- Draft Project Mode foundation on the development branch: versioned local project storage, fixed planner/reviewer/integrator roles, selected-chat worker pools, lifecycle controls, strict planner-envelope validation, approval-gated task creation, and an audit trail. The foundation does not dispatch agents yet.'
+          current_readme = '- Draft Project Mode foundation on the development branch: versioned local project storage, fixed planner/reviewer/integrator roles, strict planner-envelope validation, approval-gated task creation, deterministic worker leases, bounded local assignment preparation, restart recovery, and an audit trail. Prepared worker prompts remain local and are not sent automatically.'
+          if previous_readme not in text:
+              raise SystemExit('README publication needle did not match')
+          path.write_text(text.replace(previous_readme, current_readme, 1), encoding='utf-8')
           PY
           python .m5/apply_frontiers.py
 
