@@ -10,6 +10,7 @@ Project Mode is being developed on `agent/web-first-multi-agent-project-mode`. I
 4. **Deterministic worker lease preparation** — explicit local project start; dependency-aware ready-task selection; bounded worker assignment; idempotent dispatch IDs; deterministic task branches; lease expiry and retry attempts; restart and orphan recovery; cancellation cleanup; local worker prompts and visible worker/task state.
 5. **Result, review, and integration protocol** — strict worker-result identity and evidence validation; independent reviewer envelopes; bounded revision loops; dependency unlocks after acceptance; integration evidence with explicit completion approval.
 6. **Guarded ChatGPT Web dispatch** — an explicit model-verification checkbox opens assigned worker chats in inactive managed tabs, submits one bounded task prompt per lease, captures the result envelope, and stops rather than routing around platform restrictions.
+7. **Recoverable extended-thinking overlays** — the non-selectable “Our systems are thinking a bit more…” notice is detected through scoped DOM and accessibility text, stopped when possible, and retried in the same chat without consuming completed-work progress.
 
 ## Current safety boundary
 
@@ -20,6 +21,8 @@ Planner, reviewer, and integrator prompts can still be copied manually. Live wor
 The result, review, integration, web-dispatch, and recoverable-overlay frontiers are validated together before any source commit is created.
 
 The non-selectable extended-thinking overlay is detected through scoped live-region text and the accessible label of its retry control. It is handled as a bounded same-chat interruption retry: stop generation when possible, send the existing continuation prompt, and do not increment completed-work progress.
+
+The clean branch head passed 96 automated tests, JavaScript syntax checks, JSON validation, source cleanup checks, and ordinary GitHub Actions CI.
 
 ## Next milestone
 
