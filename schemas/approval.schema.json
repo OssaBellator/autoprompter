@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/OssaBellator/autoprompter/schemas/approval.schema.json",
+  "title": "AutoPrompter External Action Approval",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "approvalId", "projectId", "action", "target", "justification", "status", "requestedAt", "expiresAt", "decidedAt", "decisionNote", "instruction"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "approvalId": { "type": "string", "pattern": "^approval-[a-z0-9-]+-[a-z0-9]{7}$" },
+    "projectId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$" },
+    "action": { "enum": ["merge_to_default_branch", "delete_branch", "publish_release", "modify_workflow", "change_permissions", "external_side_effect"] },
+    "target": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "justification": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "status": { "enum": ["pending", "approved", "rejected", "expired", "cancelled"] },
+    "requestedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": ["string", "null"], "format": "date-time" },
+    "decidedAt": { "type": ["string", "null"], "format": "date-time" },
+    "decisionNote": { "type": ["string", "null"], "maxLength": 4000 },
+    "instruction": { "type": ["string", "null"], "maxLength": 12000 }
+  }
+}

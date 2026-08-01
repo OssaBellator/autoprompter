@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1.0",
+  "dispatchId": "dispatch-project-schema-a1-example1",
+  "projectId": "autoprompter-project-mode",
+  "planRevision": 1,
+  "taskId": "task-project-schema",
+  "workerChatId": "chat-worker-implementation-example",
+  "attempt": 1,
+  "branch": "agent/autoprompter-project-mode/project-schema-a1",
+  "status": "completed",
+  "assignedAt": "2026-07-31T04:00:00Z",
+  "expiresAt": "2026-07-31T06:00:00Z",
+  "prompt": "Complete task-project-schema within the allowed paths and return the structured worker result envelope.",
+  "createdAt": "2026-07-31T04:00:00Z",
+  "updatedAt": "2026-07-31T05:00:00Z",
+  "expiredAt": null
+}

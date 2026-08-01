@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/OssaBellator/autoprompter/schemas/result.schema.json",
+  "title": "AutoPrompter Worker Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectId",
+    "taskId",
+    "dispatchId",
+    "attempt",
+    "status",
+    "summary",
+    "commit",
+    "tests",
+    "filesChanged",
+    "risks",
+    "producedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "projectId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$"
+    },
+    "taskId": {
+      "type": "string",
+      "pattern": "^task-[a-z0-9._-]+$"
+    },
+    "dispatchId": {
+      "type": "string",
+      "pattern": "^dispatch-[a-z0-9._-]+$",
+      "maxLength": 200
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "blocked",
+        "failed"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 12000
+    },
+    "commit": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-fA-F]{7,64}$"
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "command",
+          "status",
+          "summary"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "not_run"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      }
+    },
+    "filesChanged": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*\\.\\.)[^\\u0000]+$",
+        "maxLength": 300
+      },
+      "uniqueItems": true
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      }
+    },
+    "followUpTaskSuggestions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      }
+    },
+    "producedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "schemaVersion": "1.0",
+  "projectId": "autoprompter-project-mode",
+  "title": "AutoPrompter Project Mode",
+  "goal": "Add durable planner, worker, reviewer, and integrator coordination while keeping all model inference in ChatGPT Web subscription sessions.",
+  "classification": "large_project",
+  "status": "planning",
+  "repository": {
+    "slug": "OssaBellator/autoprompter",
+    "defaultBranch": "main",
+    "handoffFile": "AUTOPROMPTER_HANDOFF.md"
+  },
+  "roles": {
+    "plannerChatId": "chat-planner-example",
+    "reviewerChatId": "chat-reviewer-example",
+    "integratorChatId": "chat-integrator-example",
+    "workerChatIds": [
+      "chat-worker-implementation-example",
+      "chat-worker-testing-example"
+    ]
+  },
+  "scheduler": {
+    "maxConcurrentWorkers": 2,
+    "readinessGraceMs": 5000,
+    "leaseMinutes": 120,
+    "revisionLimit": 2,
+    "circuitBreakerEnabled": true,
+    "approvalActions": [
+      "merge_to_default_branch",
+      "publish_release",
+      "modify_workflow",
+      "change_permissions"
+    ]
+  },
+  "modelPolicy": {
+    "mode": "manual_verified",
+    "classes": {
+      "fast": {
+        "displayName": "User-selected fast ChatGPT model",
+        "requiresUserVerification": true
+      },
+      "standard": {
+        "displayName": "User-selected general ChatGPT model",
+        "requiresUserVerification": true
+      },
+      "deep": {
+        "displayName": "User-selected high-reasoning ChatGPT model",
+        "requiresUserVerification": true
+      }
+    }
+  },
+  "createdAt": "2026-07-31T04:00:00Z",
+  "updatedAt": "2026-07-31T04:00:00Z"
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/OssaBellator/autoprompter/schemas/reconciliation.schema.json",
+  "title": "AutoPrompter Repository Reconciliation Snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "projectId", "repository", "defaultBranch", "handoffFile", "planRevision", "observedAt", "defaultBranchCommit", "branches", "taskArtifacts", "integration", "notes"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "projectId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$" },
+    "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "defaultBranch": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "handoffFile": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "planRevision": { "type": "integer", "minimum": 1 },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "defaultBranchCommit": { "type": "string", "pattern": "^[0-9a-fA-F]{7,64}$" },
+    "branches": { "type": "array", "maxItems": 200, "items": { "type": "object", "additionalProperties": false, "required": ["name", "commit"], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 240 }, "commit": { "type": "string", "pattern": "^[0-9a-fA-F]{7,64}$" } } } },
+    "taskArtifacts": { "type": "array", "maxItems": 100, "items": { "type": "object", "additionalProperties": false, "required": ["taskId", "branch", "commit", "status"], "properties": { "taskId": { "type": "string", "pattern": "^task-[a-z0-9._-]+$" }, "branch": { "type": "string", "minLength": 1, "maxLength": 240 }, "commit": { "type": ["string", "null"], "pattern": "^[0-9a-fA-F]{7,64}$" }, "status": { "enum": ["observed", "missing", "conflict"] } } } },
+    "integration": { "oneOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["branch", "commit", "status"], "properties": { "branch": { "type": "string", "minLength": 1, "maxLength": 240 }, "commit": { "type": ["string", "null"], "pattern": "^[0-9a-fA-F]{7,64}$" }, "status": { "enum": ["observed", "missing", "conflict"] } } }] },
+    "notes": { "type": "array", "maxItems": 50, "items": { "type": "string", "minLength": 1, "maxLength": 2000 } }
+  }
+}

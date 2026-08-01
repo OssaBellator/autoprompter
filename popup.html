@@ -103,6 +103,210 @@
       </div>
     </details>
 
+    <details id="projectModePanel" class="continuity project-mode">
+      <summary>Project Mode foundation</summary>
+      <div class="details-body">
+        <p class="hint">Create durable project state, validate and approve a planner envelope, prepare bounded worker leases, and explicitly send selected assignments after manual model verification. Planner, reviewer, and integrator prompts remain manual.</p>
+
+        <div class="project-toolbar">
+          <label>
+            Saved project
+            <select id="projectSelect">
+              <option value="">No projects yet</option>
+            </select>
+          </label>
+          <button id="inspectProject" class="compact" type="button">Inspect</button>
+        </div>
+
+        <div id="projectStatusCard" class="project-status-card" hidden>
+          <strong id="projectStatusTitle"></strong>
+          <span id="projectStatusBadge" class="project-status-badge"></span>
+          <small id="projectStatusMeta"></small>
+          <pre id="projectInspectOutput"></pre>
+          <div class="inline-actions">
+            <button id="pauseProject" class="compact" type="button">Pause</button>
+            <button id="resumeProject" class="compact" type="button">Resume</button>
+            <button id="cancelProject" class="compact" type="button">Cancel</button>
+          </div>
+
+          <section id="plannerWorkbench" class="planner-workbench">
+            <strong>Planner output approval</strong>
+            <p class="hint">Generate a bounded prompt, paste it into the assigned planner chat, then paste the planner's exact envelope below. AutoPrompter validates and stores it, but creates no task records until you approve it.</p>
+            <button id="buildPlannerPrompt" class="compact" type="button">Generate planner prompt</button>
+            <label>
+              Planner prompt
+              <textarea id="plannerPromptOutput" rows="8" readonly placeholder="Generate a prompt for the assigned planner chat"></textarea>
+            </label>
+            <label>
+              Planner response
+              <textarea id="plannerResponseInput" rows="8" maxlength="120000" placeholder="AUTOPROMPTER_PLAN_BEGIN&#10;{ ... }&#10;AUTOPROMPTER_PLAN_END"></textarea>
+            </label>
+            <div class="inline-actions">
+              <button id="validatePlannerOutput" class="compact" type="button">Validate pending plan</button>
+              <button id="approveProjectPlan" class="compact" type="button">Approve and create tasks</button>
+              <button id="discardProjectPlan" class="compact" type="button">Discard pending plan</button>
+            </div>
+            <pre id="plannerPlanSummary"></pre>
+          </section>
+
+          <section id="workerWorkbench" class="worker-workbench">
+            <strong>Worker lease preparation</strong>
+            <p class="hint">Prepare leases locally, inspect prompts, or explicitly dispatch them to assigned ChatGPT Web chats after verifying each worker model. Model selection is never automated.</p>
+            <div class="inline-actions">
+              <button id="startProjectMode" class="compact" type="button">Start project locally</button>
+              <button id="prepareProjectAssignments" class="compact" type="button">Prepare assignments</button>
+              <button id="recoverProjectLeases" class="compact" type="button">Recover expired leases</button>
+            </div>
+            <label class="project-dispatch-confirmation">
+              <input id="projectModelVerified" type="checkbox">
+              I verified the configured model in every assigned worker chat
+            </label>
+            <button id="dispatchProjectAssignments" class="primary" type="button">Send prepared assignments to ChatGPT Web</button>
+            <div id="projectWorkerState" class="project-worker-state"></div>
+            <label>
+              Prepared assignment
+              <select id="projectDispatchSelect">
+                <option value="">No prepared assignments</option>
+              </select>
+            </label>
+            <textarea id="projectDispatchPrompt" rows="8" readonly placeholder="Choose an assignment to inspect its prompt"></textarea>
+
+            <section class="result-review-workbench">
+              <strong>Result and independent review</strong>
+              <p class="hint">Live worker replies are captured automatically. For manual work, paste the exact result envelope for the selected dispatch. A separate reviewer envelope is required before the task can be accepted.</p>
+              <label>
+                Worker result envelope
+                <textarea id="projectResultInput" rows="8" maxlength="120000" placeholder="AUTOPROMPTER_TASK_RESULT_BEGIN&#10;{ ... }&#10;AUTOPROMPTER_TASK_RESULT_END"></textarea>
+              </label>
+              <button id="submitProjectResult" class="compact" type="button">Validate worker result</button>
+              <button id="buildProjectReviewerPrompt" class="compact" type="button">Generate reviewer prompt</button>
+              <label>
+                Reviewer prompt
+                <textarea id="projectReviewerPrompt" rows="8" readonly></textarea>
+              </label>
+              <label>
+                Reviewer response envelope
+                <textarea id="projectReviewInput" rows="8" maxlength="120000" placeholder="AUTOPROMPTER_REVIEW_BEGIN&#10;{ ... }&#10;AUTOPROMPTER_REVIEW_END"></textarea>
+              </label>
+              <button id="submitProjectReview" class="compact" type="button">Validate reviewer decision</button>
+            </section>
+
+            <section class="integration-workbench">
+              <strong>Integration evidence</strong>
+              <p class="hint">After every task is independently accepted, generate an integrator prompt. Integration remains on a non-default branch and project completion requires explicit approval.</p>
+              <button id="buildProjectIntegratorPrompt" class="compact" type="button">Generate integrator prompt</button>
+              <label>
+                Integrator prompt
+                <textarea id="projectIntegratorPrompt" rows="8" readonly></textarea>
+              </label>
+              <label>
+                Integration response envelope
+                <textarea id="projectIntegrationInput" rows="8" maxlength="120000" placeholder="AUTOPROMPTER_INTEGRATION_BEGIN&#10;{ ... }&#10;AUTOPROMPTER_INTEGRATION_END"></textarea>
+              </label>
+              <div class="inline-actions">
+                <button id="submitProjectIntegration" class="compact" type="button">Validate integration</button>
+                <button id="requestProjectIntegrationRetry" class="compact" type="button">Request retry</button>
+                <button id="approveProjectIntegration" class="compact" type="button">Approve completion</button>
+                <button id="discardProjectIntegration" class="compact" type="button">Discard integration</button>
+              </div>
+              <label>
+                Integration retry requirements
+                <textarea id="projectIntegrationRetryChanges" rows="3" placeholder="One required change per line; blocked conflicts are included automatically"></textarea>
+              </label>
+            </section>
+
+            <section class="approval-workbench">
+              <strong>External-action approval queue</strong>
+              <p class="hint">Approval records user intent only. AutoPrompter does not execute merges, releases, workflow changes, permission changes, deletions, or external side effects.</p>
+              <div class="grid">
+                <label>
+                  Action
+                  <select id="projectApprovalAction">
+                    <option value="merge_to_default_branch">Merge to default branch</option>
+                    <option value="delete_branch">Delete branch</option>
+                    <option value="publish_release">Publish release</option>
+                    <option value="modify_workflow">Modify workflow</option>
+                    <option value="change_permissions">Change permissions</option>
+                    <option value="external_side_effect">Other external side effect</option>
+                  </select>
+                </label>
+                <label>
+                  Target
+                  <input id="projectApprovalTarget" type="text" maxlength="500" placeholder="branch, release, workflow, permission, or external target">
+                </label>
+              </div>
+              <label>
+                Justification
+                <textarea id="projectApprovalJustification" rows="3" maxlength="4000" placeholder="Why this exact action and target are needed"></textarea>
+              </label>
+              <button id="requestProjectApproval" class="compact" type="button">Add pending approval</button>
+              <label>
+                Approval request
+                <select id="projectApprovalSelect"><option value="">No approval requests</option></select>
+              </label>
+              <label>
+                Decision note
+                <textarea id="projectApprovalDecisionNote" rows="2" maxlength="4000"></textarea>
+              </label>
+              <div class="inline-actions">
+                <button id="approveProjectAction" class="compact" type="button">Approve request</button>
+                <button id="rejectProjectAction" class="compact" type="button">Reject request</button>
+              </div>
+              <textarea id="projectApprovalInstruction" rows="6" readonly placeholder="An approved request produces a scoped instruction but performs no action"></textarea>
+            </section>
+
+            <section class="reconciliation-workbench">
+              <strong>Repository restart reconciliation</strong>
+              <p class="hint">Generate a read-only repository evidence prompt after a browser or extension restart. Reconciliation never accepts tasks or integrations by itself.</p>
+              <button id="buildProjectReconciliationPrompt" class="compact" type="button">Generate reconciliation prompt</button>
+              <textarea id="projectReconciliationPrompt" rows="7" readonly></textarea>
+              <textarea id="projectReconciliationInput" rows="7" maxlength="120000" placeholder="AUTOPROMPTER_RECONCILIATION_BEGIN&#10;{ ... }&#10;AUTOPROMPTER_RECONCILIATION_END"></textarea>
+              <button id="submitProjectReconciliation" class="compact" type="button">Validate repository snapshot</button>
+              <pre id="projectReconciliationSummary"></pre>
+            </section>
+
+            <section class="selector-health-workbench">
+              <strong>ChatGPT selector health</strong>
+              <p class="hint">Checks currently open ChatGPT tabs for the composer, send/stop controls, new-chat control, notices, and conversation identity. This is not an authenticated end-to-end validation.</p>
+              <button id="checkProjectSelectorHealth" class="compact" type="button">Check open ChatGPT tabs</button>
+              <pre id="projectSelectorHealthOutput"></pre>
+            </section>
+          </section>
+        </div>
+
+        <label>
+          Project title
+          <input id="projectTitle" type="text" maxlength="160" placeholder="AutoPrompter Project Mode">
+        </label>
+        <label>
+          Project goal
+          <textarea id="projectGoal" rows="4" maxlength="12000" placeholder="Describe the durable project outcome"></textarea>
+        </label>
+        <label>
+          GitHub repository
+          <input id="projectRepository" type="text" placeholder="owner/repository">
+        </label>
+
+        <div class="grid">
+          <label>
+            Planner chat
+            <select id="projectPlannerChat"></select>
+          </label>
+          <label>
+            Reviewer chat
+            <select id="projectReviewerChat"></select>
+          </label>
+        </div>
+        <label>
+          Integrator chat
+          <select id="projectIntegratorChat"></select>
+        </label>
+        <p id="projectWorkerHint" class="hint">Currently selected chats become the worker pool, excluding chats assigned to fixed roles.</p>
+        <button id="createProject" class="primary project-create" type="button">Create project draft</button>
+        <p id="projectMessage" class="hint" aria-live="polite"></p>
+      </div>
+    </details>
+
     <section class="picker">
       <div class="picker-heading">
         <div>

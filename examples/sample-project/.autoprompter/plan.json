@@ -1,0 +1,75 @@
+{
+  "schemaVersion": "1.0",
+  "projectId": "autoprompter-project-mode",
+  "revision": 1,
+  "requiresMultipleAgents": true,
+  "rationale": "The work spans persistent state, task scheduling, browser orchestration, repository protocols, review, integration, and recovery, with several independently testable components.",
+  "phases": [
+    {
+      "id": "phase-protocol",
+      "title": "Durable project protocol",
+      "taskIds": [
+        "task-project-schema",
+        "task-protocol-tests"
+      ],
+      "acceptanceCriteria": [
+        "Project, plan, task, and result files have versioned schemas.",
+        "The sample task graph is acyclic and references only known tasks."
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-project-schema",
+      "title": "Define durable project protocol schemas",
+      "description": "Create the first version of the project, plan, task, and worker-result contracts used by ChatGPT Web planner and worker sessions.",
+      "dependencies": [],
+      "role": "documentation",
+      "difficulty": "medium",
+      "preferredModelClass": "deep",
+      "allowedPaths": [
+        "schemas/**",
+        "docs/**",
+        "examples/sample-project/**"
+      ],
+      "acceptanceCriteria": [
+        "Every contract has an explicit schemaVersion.",
+        "Unknown fields are rejected by default.",
+        "Task paths cannot be absolute or contain parent traversal.",
+        "Model routing is expressed as capability classes rather than hard-coded model IDs."
+      ],
+      "verificationCommands": [
+        "npm test"
+      ]
+    },
+    {
+      "id": "task-protocol-tests",
+      "title": "Add protocol invariant tests",
+      "description": "Validate the example project graph and core safety invariants without introducing a runtime dependency.",
+      "dependencies": [
+        "task-project-schema"
+      ],
+      "role": "testing",
+      "difficulty": "medium",
+      "preferredModelClass": "standard",
+      "allowedPaths": [
+        "tests/project-protocol.test.js",
+        "examples/sample-project/**"
+      ],
+      "acceptanceCriteria": [
+        "Duplicate task identifiers are rejected.",
+        "Unknown and cyclic dependencies are rejected.",
+        "Unsafe allowed paths are rejected.",
+        "Worker chat assignments are unique."
+      ],
+      "verificationCommands": [
+        "npm test"
+      ]
+    }
+  ],
+  "criticalPath": [
+    "task-project-schema",
+    "task-protocol-tests"
+  ],
+  "createdAt": "2026-07-31T04:00:00Z"
+}

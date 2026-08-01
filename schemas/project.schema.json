@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/OssaBellator/autoprompter/schemas/project.schema.json",
+  "title": "AutoPrompter Project",
+  "description": "Durable project metadata for subscription-backed ChatGPT Web multi-agent orchestration.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectId",
+    "title",
+    "goal",
+    "classification",
+    "status",
+    "repository",
+    "roles",
+    "scheduler",
+    "modelPolicy",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "projectId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$"
+    },
+    "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "goal": { "type": "string", "minLength": 1, "maxLength": 12000 },
+    "classification": {
+      "type": "string",
+      "enum": ["one_off", "project", "large_project"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "planning", "ready", "running", "paused", "completed", "failed", "cancelled"]
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slug", "defaultBranch", "handoffFile"],
+      "properties": {
+        "slug": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "defaultBranch": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "handoffFile": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9_./-]+$",
+          "maxLength": 200
+        }
+      }
+    },
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plannerChatId", "reviewerChatId", "integratorChatId", "workerChatIds"],
+      "properties": {
+        "plannerChatId": { "type": ["string", "null"], "maxLength": 200 },
+        "reviewerChatId": { "type": ["string", "null"], "maxLength": 200 },
+        "integratorChatId": { "type": ["string", "null"], "maxLength": 200 },
+        "workerChatIds": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "uniqueItems": true,
+          "maxItems": 12
+        }
+      }
+    },
+    "scheduler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxConcurrentWorkers",
+        "readinessGraceMs",
+        "leaseMinutes",
+        "revisionLimit",
+        "circuitBreakerEnabled",
+        "approvalActions"
+      ],
+      "properties": {
+        "maxConcurrentWorkers": { "type": "integer", "minimum": 1, "maximum": 12 },
+        "readinessGraceMs": { "type": "integer", "minimum": 1000, "maximum": 60000 },
+        "leaseMinutes": { "type": "integer", "minimum": 5, "maximum": 1440 },
+        "revisionLimit": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "circuitBreakerEnabled": { "type": "boolean" },
+        "approvalActions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "merge_to_default_branch",
+              "delete_branch",
+              "publish_release",
+              "modify_workflow",
+              "change_permissions",
+              "external_side_effect"
+            ]
+          }
+        }
+      }
+    },
+    "modelPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "classes"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["manual_verified", "advisory_only"]
+        },
+        "classes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["fast", "standard", "deep"],
+          "properties": {
+            "fast": { "$ref": "#/$defs/modelClass" },
+            "standard": { "$ref": "#/$defs/modelClass" },
+            "deep": { "$ref": "#/$defs/modelClass" }
+          }
+        }
+      }
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "modelClass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["displayName", "requiresUserVerification"],
+      "properties": {
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "requiresUserVerification": { "type": "boolean" }
+      }
+    }
+  }
+}

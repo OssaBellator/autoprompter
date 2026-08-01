@@ -1,5 +1,15 @@
 "use strict";
 
+if (typeof importScripts === "function") importScripts("planner-protocol.js", "worker-protocol.js", "result-protocol.js", "reviewer-protocol.js", "integration-protocol.js", "approval-protocol.js", "reconciliation-protocol.js", "project-store.js");
+const PlannerProtocol = globalThis.AutoPrompterPlannerProtocol || (typeof require === "function" ? require("./planner-protocol.js") : null);
+const WorkerProtocol = globalThis.AutoPrompterWorkerProtocol || (typeof require === "function" ? require("./worker-protocol.js") : null);
+const ResultProtocol = globalThis.AutoPrompterResultProtocol || (typeof require === "function" ? require("./result-protocol.js") : null);
+const ReviewerProtocol = globalThis.AutoPrompterReviewerProtocol || (typeof require === "function" ? require("./reviewer-protocol.js") : null);
+const IntegrationProtocol = globalThis.AutoPrompterIntegrationProtocol || (typeof require === "function" ? require("./integration-protocol.js") : null);
+const ApprovalProtocol = globalThis.AutoPrompterApprovalProtocol || (typeof require === "function" ? require("./approval-protocol.js") : null);
+const ReconciliationProtocol = globalThis.AutoPrompterReconciliationProtocol || (typeof require === "function" ? require("./reconciliation-protocol.js") : null);
+const ProjectStore = globalThis.AutoPrompterProjectStore || (typeof require === "function" ? require("./project-store.js") : null);
+
 const MESSAGE_SCOPE = "AUTOPROMPTER_RUNTIME";
 const SESSION_KEY = "autoprompterScheduler";
 const SETTINGS_KEY = "autoprompterSettings";
@@ -33,6 +43,7 @@ const DEFAULTS = Object.freeze({
 });
 
 let operationQueue = Promise.resolve();
+let projectStoreStartupChecked = false;
 const initialBatchTimers = new Map();
 
 function enqueue(operation) {
@@ -289,6 +300,461 @@ async function saveState(state) {
   await chrome.storage.session.set({
     [SESSION_KEY]: { ...state, savedAt: Date.now() }
   });
+}
+
+async function loadProjectStore() {
+  if (!ProjectStore) throw new Error("Project Mode store is unavailable.");
+  const stored = await chrome.storage.local.get(ProjectStore.PROJECTS_KEY);
+  const migrated = ProjectStore.migrateStore(stored?.[ProjectStore.PROJECTS_KEY]);
+  const recovered = ProjectStore.recoverAllProjectLeases(migrated.store);
+  let store = recovered.store;
+  let changed = migrated.migrated || recovered.changed;
+  if (!projectStoreStartupChecked) {
+    projectStoreStartupChecked = true;
+    for (const [projectId, project] of Object.entries(store.projects || {})) {
+      const hasDurableArtifacts = Object.keys(store.resultsByProject?.[projectId] || {}).length
+        || Object.values(store.tasksByProject?.[projectId] || {}).some(task => task.status === "accepted")
+        || Boolean(store.integrationsByProject?.[projectId]);
+      if (project.status === "running" && hasDurableArtifacts
+          && (!project.lastReconciledAt || Date.parse(project.updatedAt) > Date.parse(project.lastReconciledAt))) {
+        const marked = ProjectStore.markRepositoryReconciliationRequired(store, projectId, "Extension runtime restarted with durable task or integration artifacts");
+        store = marked.store;
+        changed = true;
+      }
+    }
+  }
+  if (changed) await saveProjectStore(store);
+  return store;
+}
+
+async function saveProjectStore(store) {
+  await chrome.storage.local.set({ [ProjectStore.PROJECTS_KEY]: store });
+}
+
+async function listProjectState() {
+  const store = await loadProjectStore();
+  return {
+    projectStoreVersion: store.schemaVersion,
+    activeProjectId: store.activeProjectId,
+    projects: ProjectStore.listProjects(store)
+  };
+}
+
+async function createProjectState(input) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.createProject(store, input);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project
+  };
+}
+
+async function inspectProjectState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.inspectProject(store, projectId);
+  if (result.store.activeProjectId !== result.project.projectId) {
+    result.store.activeProjectId = result.project.projectId;
+    await saveProjectStore(result.store);
+  }
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    project: result.project,
+    events: result.events,
+    pendingPlan: result.pendingPlan,
+    approvedPlan: result.approvedPlan,
+    tasks: result.tasks,
+    dispatches: result.dispatches,
+    results: result.results,
+    reviews: result.reviews,
+    integration: result.integration,
+    approvals: result.approvals,
+    reconciliation: result.reconciliation,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
+async function transitionProjectState(projectId, action) {
+  const store = await loadProjectStore();
+  const tabIds = action === "cancel"
+    ? Object.values(store.dispatchesByProject[projectId] || {}).map(dispatch => dispatch.workerTabId).filter(Number.isInteger)
+    : [];
+  const result = ProjectStore.transitionProject(store, projectId, action);
+  await saveProjectStore(result.store);
+  if (tabIds.length) await removeManagedTabs(tabIds);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project
+  };
+}
+
+async function buildPlannerPromptState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.buildProjectPlannerPrompt(store, projectId);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.project.projectId,
+    project: result.project,
+    revision: result.revision,
+    prompt: result.prompt
+  };
+}
+
+async function submitPlannerOutputState(projectId, output) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.submitProjectPlannerOutput(store, projectId, output);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    pendingPlan: result.pendingPlan,
+    planSummary: result.summary,
+    tasks: {}
+  };
+}
+
+async function approvePlannerPlanState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.approveProjectPlan(store, projectId);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    pendingPlan: null,
+    approvedPlan: result.approvedPlan,
+    planSummary: result.summary,
+    tasks: result.tasks
+  };
+}
+
+async function discardPlannerPlanState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.discardProjectPlan(store, projectId);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    pendingPlan: null,
+    approvedPlan: result.store.approvedPlansByProject[projectId] || null,
+    tasks: result.store.tasksByProject[projectId] || {}
+  };
+}
+
+async function startProjectModeState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.startProject(store, projectId);
+  await saveProjectStore(result.store);
+  const inspected = ProjectStore.inspectProject(result.store, projectId);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    tasks: inspected.tasks,
+    dispatches: inspected.dispatches,
+    runtimeSummary: inspected.runtimeSummary
+  };
+}
+
+async function prepareProjectAssignmentsState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.prepareProjectDispatches(store, projectId);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    tasks: result.tasks,
+    dispatches: result.dispatches,
+    assignments: result.assignments,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
+async function recoverProjectLeasesState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.recoverProjectLeases(store, projectId);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    tasks: result.tasks,
+    dispatches: result.dispatches,
+    expiredDispatchIds: result.expiredDispatchIds,
+    unlockedTaskIds: result.unlockedTaskIds,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
+
+async function submitProjectTaskResultState(projectId, dispatchId, output) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.submitProjectTaskResult(store, projectId, dispatchId, output);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    task: result.task,
+    dispatch: result.dispatch,
+    result: result.result,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
+async function buildProjectReviewerPromptState(projectId, dispatchId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.buildProjectReviewerPrompt(store, projectId, dispatchId);
+  return { project: result.project, task: result.task, dispatch: result.dispatch, result: result.result, prompt: result.prompt };
+}
+
+async function submitProjectReviewState(projectId, dispatchId, output) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.submitProjectReview(store, projectId, dispatchId, output);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    task: result.task,
+    dispatch: result.dispatch,
+    review: result.review,
+    integrationReady: result.integrationReady,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
+async function buildProjectIntegratorPromptState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.buildProjectIntegratorPrompt(store, projectId);
+  await saveProjectStore(result.store);
+  return { project: result.project, prompt: result.prompt, integrationId: result.integrationId, integrationAttempt: result.integrationAttempt, integration: result.integration };
+}
+
+async function submitProjectIntegrationState(projectId, output) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.submitProjectIntegrationOutput(store, projectId, output);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    integration: result.integration,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
+async function approveProjectIntegrationState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.approveProjectIntegration(store, projectId);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    integration: result.integration,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
+async function discardProjectIntegrationState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.discardProjectIntegration(store, projectId);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    integration: result.integration,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
+async function requestProjectIntegrationRetryState(projectId, requiredChanges) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.requestProjectIntegrationRetry(store, projectId, requiredChanges);
+  await saveProjectStore(result.store);
+  return { project: result.project, integration: result.integration, runtimeSummary: result.runtimeSummary };
+}
+
+async function requestProjectApprovalState(projectId, approval) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.requestProjectApproval(store, projectId, approval);
+  await saveProjectStore(result.store);
+  return { project: result.project, approval: result.approval, approvals: result.approvals, runtimeSummary: result.runtimeSummary };
+}
+
+async function decideProjectApprovalState(projectId, approvalId, decision, note) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.decideProjectApproval(store, projectId, approvalId, decision, note);
+  await saveProjectStore(result.store);
+  return { project: result.project, approval: result.approval, approvals: result.approvals, runtimeSummary: result.runtimeSummary };
+}
+
+async function buildProjectReconciliationPromptState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.buildProjectReconciliationPrompt(store, projectId);
+  return { project: result.project, prompt: result.prompt };
+}
+
+async function submitProjectReconciliationState(projectId, output) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.submitProjectReconciliation(store, projectId, output);
+  await saveProjectStore(result.store);
+  return { project: result.project, reconciliation: result.reconciliation, runtimeSummary: result.runtimeSummary };
+}
+
+async function getProjectSelectorHealthState() {
+  const tabs = await chrome.tabs.query({ url: ["https://chatgpt.com/*", "https://chat.openai.com/*"] });
+  const results = [];
+  for (const tab of tabs) {
+    try {
+      const health = await chrome.tabs.sendMessage(tab.id, { type: "GET_SELECTOR_HEALTH" });
+      results.push({ tabId: tab.id, title: tab.title || "ChatGPT", url: tab.url, ...health });
+    } catch (error) {
+      results.push({ tabId: tab.id, title: tab.title || "ChatGPT", url: tab.url, ok: false, status: "unavailable", error: error?.message || String(error) });
+    }
+  }
+  return { checkedAt: new Date().toISOString(), tabs: results };
+}
+
+function findProjectDispatchByTab(store, tabId) {
+  for (const [projectId, dispatches] of Object.entries(store.dispatchesByProject || {})) {
+    for (const dispatch of Object.values(dispatches || {})) {
+      if (dispatch?.workerTabId === tabId && ["dispatched", "running"].includes(dispatch.status)) return { projectId, dispatch };
+    }
+  }
+  return null;
+}
+
+async function dispatchPreparedProjectAssignmentsState(projectId, dispatchIds, modelVerified) {
+  if (modelVerified !== true) throw new Error("Verify the configured ChatGPT model in every worker chat before dispatching.");
+  const scheduler = await loadState();
+  if (scheduler?.running) throw new Error("Stop the normal AutoPrompter scheduler before dispatching Project Mode workers.");
+  let store = await loadProjectStore();
+  const project = store.projects[projectId];
+  if (!project || project.status !== "running") throw new Error("Project must be running before web dispatch.");
+  const wanted = new Set(Array.isArray(dispatchIds) ? dispatchIds : []);
+  const prepared = Object.values(store.dispatchesByProject[projectId] || {})
+    .filter(dispatch => dispatch.status === "prepared" && (!wanted.size || wanted.has(dispatch.dispatchId)));
+  if (!prepared.length) throw new Error("No prepared assignments are available for web dispatch.");
+  const stored = await chrome.storage.local.get([CATALOG_KEY, SETTINGS_KEY]);
+  const catalog = Array.isArray(stored[CATALOG_KEY]) ? stored[CATALOG_KEY] : [];
+  const byId = new Map(catalog.map(chat => [chat.id, chat]));
+  const settings = normalizeSettings({ ...(stored[SETTINGS_KEY] || {}), continuityEnabled: false, delaySeconds: 5 });
+  const started = [];
+  for (const dispatch of prepared) {
+    const chat = byId.get(dispatch.workerChatId);
+    if (!chat?.url) throw new Error(`Worker chat ${dispatch.workerChatId} is missing from the local catalog. Refresh the ChatGPT sidebar first.`);
+    const tab = await chrome.tabs.create({ url: chat.url, active: false });
+    try {
+      const marked = ProjectStore.markProjectDispatchStarted(store, projectId, dispatch.dispatchId, tab.id);
+      store = marked.store;
+      await saveProjectStore(store);
+      started.push(marked.dispatch);
+    } catch (error) {
+      await removeManagedTab(tab.id);
+      throw error;
+    }
+  }
+  return {
+    projectStoreVersion: store.schemaVersion,
+    activeProjectId: store.activeProjectId,
+    projects: ProjectStore.listProjects(store),
+    project: store.projects[projectId],
+    started,
+    runtimeSummary: ProjectStore.summarizeProjectRuntime(store, projectId)
+  };
+}
+
+async function handleProjectTaskStatus(message) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.updateProjectDispatchStatus(store, message.projectId, message.dispatchId, message.status);
+  await saveProjectStore(result.store);
+  return { ok: true };
+}
+
+async function handleProjectTaskResult(message, sender) {
+  const result = await submitProjectTaskResultState(message.projectId, message.dispatchId, message.output);
+  await removeManagedTab(sender?.tab?.id || result.dispatch.workerTabId);
+  return result;
+}
+
+async function handleProjectSuccessorTaskResult(message, sender) {
+  let store = await loadProjectStore();
+  const bound = ProjectStore.bindProjectSuccessorConversation(store, message.projectId, message.dispatchId, message.conversation?.id);
+  store = bound.store;
+  const result = ProjectStore.submitProjectTaskResult(store, message.projectId, message.dispatchId, message.output);
+  await saveProjectStore(result.store);
+  await removeManagedTab(sender?.tab?.id || result.dispatch.workerTabId);
+  return {
+    project: result.project,
+    task: result.task,
+    dispatch: result.dispatch,
+    result: result.result,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
+async function failProjectDispatch(message, sender) {
+  let store = await loadProjectStore();
+  if (message.kind === "context_limit") {
+    try {
+      const prepared = ProjectStore.createProjectDispatchSuccessor(store, message.projectId, message.dispatchId, message.error || message.kind);
+      store = prepared.store;
+      await removeManagedTab(sender?.tab?.id);
+      const tab = await chrome.tabs.create({
+        url: freshChatUrl(prepared.successor.freshRequestId, prepared.successor.originalDispatchId, prepared.successor.dispatchId),
+        active: false
+      });
+      const started = ProjectStore.markProjectDispatchStarted(store, message.projectId, prepared.successor.dispatchId, tab.id);
+      await saveProjectStore(started.store);
+      return { ok: true, successorDispatchId: prepared.successor.dispatchId, successorGeneration: prepared.successor.successorGeneration };
+    } catch (error) {
+      const current = store.dispatchesByProject?.[message.projectId]?.[message.dispatchId];
+      if (current && ["dispatched", "running", "prepared"].includes(current.status)) {
+        store = ProjectStore.markProjectDispatchTransportError(store, message.projectId, message.dispatchId, error?.message || String(error)).store;
+      }
+      await removeManagedTab(sender?.tab?.id);
+      await saveProjectStore(store);
+      return { ok: false, error: error?.message || String(error) };
+    }
+  }
+  const failed = ProjectStore.markProjectDispatchTransportError(store, message.projectId, message.dispatchId, message.error || message.kind || "Project worker failed");
+  store = failed.store;
+  if (["rate_limit", "account_restriction", "safety_restriction"].includes(message.kind) && store.projects[message.projectId]?.status === "running") {
+    const activeTabs = Object.values(store.dispatchesByProject[message.projectId] || {}).map(dispatch => dispatch.workerTabId).filter(Number.isInteger);
+    for (const dispatch of Object.values(store.dispatchesByProject[message.projectId] || {})) {
+      if (["dispatched", "running"].includes(dispatch.status)) {
+        store = ProjectStore.markProjectDispatchTransportError(store, message.projectId, dispatch.dispatchId, message.error || message.kind).store;
+      }
+    }
+    store = ProjectStore.transitionProject(store, message.projectId, "pause").store;
+    await removeManagedTabs(activeTabs);
+  } else {
+    await removeManagedTab(sender?.tab?.id);
+  }
+  await saveProjectStore(store);
+  return { ok: true };
 }
 
 async function notify(state, title, message, idSuffix = "event") {
@@ -1027,7 +1493,100 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return startScheduler(message.chats, message.settings, message.mode);
       case "STOP_SCHEDULER":
         return stopScheduler("Stopped by user", "", true);
+      case "GET_PROJECTS":
+        return listProjectState();
+      case "CREATE_PROJECT":
+        return createProjectState(message.project);
+      case "INSPECT_PROJECT":
+        return inspectProjectState(message.projectId);
+      case "PAUSE_PROJECT":
+        return transitionProjectState(message.projectId, "pause");
+      case "RESUME_PROJECT":
+        return transitionProjectState(message.projectId, "resume");
+      case "CANCEL_PROJECT":
+        return transitionProjectState(message.projectId, "cancel");
+      case "BUILD_PLANNER_PROMPT":
+        return buildPlannerPromptState(message.projectId);
+      case "SUBMIT_PLANNER_OUTPUT":
+        return submitPlannerOutputState(message.projectId, message.output);
+      case "APPROVE_PROJECT_PLAN":
+        return approvePlannerPlanState(message.projectId);
+      case "DISCARD_PROJECT_PLAN":
+        return discardPlannerPlanState(message.projectId);
+      case "START_PROJECT_MODE":
+        return startProjectModeState(message.projectId);
+      case "PREPARE_PROJECT_ASSIGNMENTS":
+        return prepareProjectAssignmentsState(message.projectId);
+      case "RECOVER_PROJECT_LEASES":
+        return recoverProjectLeasesState(message.projectId);
+      case "SUBMIT_PROJECT_TASK_RESULT":
+        return submitProjectTaskResultState(message.projectId, message.dispatchId, message.output);
+      case "BUILD_PROJECT_REVIEWER_PROMPT":
+        return buildProjectReviewerPromptState(message.projectId, message.dispatchId);
+      case "SUBMIT_PROJECT_REVIEW":
+        return submitProjectReviewState(message.projectId, message.dispatchId, message.output);
+      case "BUILD_PROJECT_INTEGRATOR_PROMPT":
+        return buildProjectIntegratorPromptState(message.projectId);
+      case "SUBMIT_PROJECT_INTEGRATION":
+        return submitProjectIntegrationState(message.projectId, message.output);
+      case "APPROVE_PROJECT_INTEGRATION":
+        return approveProjectIntegrationState(message.projectId);
+      case "DISCARD_PROJECT_INTEGRATION":
+        return discardProjectIntegrationState(message.projectId);
+      case "REQUEST_PROJECT_INTEGRATION_RETRY":
+        return requestProjectIntegrationRetryState(message.projectId, message.requiredChanges);
+      case "REQUEST_PROJECT_APPROVAL":
+        return requestProjectApprovalState(message.projectId, message.approval);
+      case "DECIDE_PROJECT_APPROVAL":
+        return decideProjectApprovalState(message.projectId, message.approvalId, message.decision, message.note);
+      case "BUILD_PROJECT_RECONCILIATION_PROMPT":
+        return buildProjectReconciliationPromptState(message.projectId);
+      case "SUBMIT_PROJECT_RECONCILIATION":
+        return submitProjectReconciliationState(message.projectId, message.output);
+      case "GET_PROJECT_SELECTOR_HEALTH":
+        return getProjectSelectorHealthState();
+      case "DISPATCH_PROJECT_ASSIGNMENTS":
+        return dispatchPreparedProjectAssignmentsState(message.projectId, message.dispatchIds, message.modelVerified);
+      case "PROJECT_TASK_STATUS":
+        return handleProjectTaskStatus(message);
+      case "PROJECT_TASK_RESULT":
+        return handleProjectTaskResult(message, sender);
+      case "PROJECT_SUCCESSOR_TASK_RESULT":
+        return handleProjectSuccessorTaskResult(message, sender);
+      case "PROJECT_TASK_INTERRUPTED":
+      case "PROJECT_TASK_ERROR":
+        return failProjectDispatch(message, sender);
       case "CONTENT_READY": {
+        const projectStore = await loadProjectStore();
+        const projectWorker = findProjectDispatchByTab(projectStore, sender.tab?.id);
+        if (projectWorker) {
+          const project = projectStore.projects[projectWorker.projectId];
+          const conversationId = message.conversation?.id;
+          const isSuccessor = Number(projectWorker.dispatch.successorGeneration || 0) > 0;
+          if (!isSuccessor && conversationId !== (projectWorker.dispatch.conversationId || projectWorker.dispatch.workerChatId)) {
+            await failProjectDispatch({
+              projectId: projectWorker.projectId,
+              dispatchId: projectWorker.dispatch.dispatchId,
+              error: "The managed tab opened a different worker conversation."
+            }, sender);
+            return { ok: false };
+          }
+          const stored = await chrome.storage.local.get(SETTINGS_KEY);
+          const settings = normalizeSettings({ ...(stored[SETTINGS_KEY] || {}), continuityEnabled: false, delaySeconds: 5 });
+          await chrome.tabs.sendMessage(sender.tab.id, {
+            type: isSuccessor ? "RUN_PROJECT_SUCCESSOR_TASK" : "RUN_PROJECT_TASK",
+            jobId: projectWorker.dispatch.dispatchId,
+            projectId: projectWorker.projectId,
+            dispatchId: projectWorker.dispatch.dispatchId,
+            workerChatId: projectWorker.dispatch.workerChatId,
+            parentConversationId: projectWorker.dispatch.workerChatId,
+            freshRequestId: projectWorker.dispatch.freshRequestId,
+            prompt: projectWorker.dispatch.prompt,
+            settings,
+            project: { title: project.title, repository: project.repository }
+          });
+          return { ok: true, projectDispatchId: projectWorker.dispatch.dispatchId, successor: isSuccessor };
+        }
         const state = await loadState();
         const index = findChatIndexByTab(state, sender.tab?.id);
         if (state?.running && index >= 0) return markContentReady(state, index);
@@ -1096,6 +1655,12 @@ if (typeof module !== "undefined") {
     buildFreshStartPrompt,
     CONNECTION_RETRY_PROMPT,
     MAX_CONNECTION_RETRIES,
-    INITIAL_BATCH_GRACE_MS
+    INITIAL_BATCH_GRACE_MS,
+    PlannerProtocol,
+    WorkerProtocol,
+    ResultProtocol,
+    ReviewerProtocol,
+    IntegrationProtocol,
+    ProjectStore
   };
 }

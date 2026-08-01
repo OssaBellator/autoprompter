@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "1.0",
+  "projectId": "autoprompter-project-mode",
+  "id": "task-project-schema",
+  "title": "Define durable project protocol schemas",
+  "description": "Create the first version of the project, plan, task, and worker-result contracts used by ChatGPT Web planner and worker sessions.",
+  "status": "accepted",
+  "role": "documentation",
+  "difficulty": "medium",
+  "preferredModelClass": "deep",
+  "dependencies": [],
+  "allowedPaths": [
+    "schemas/**",
+    "docs/**",
+    "examples/sample-project/**"
+  ],
+  "acceptanceCriteria": [
+    "Every contract has an explicit schemaVersion.",
+    "Unknown fields are rejected by default.",
+    "Task paths cannot be absolute or contain parent traversal.",
+    "Model routing is expressed as capability classes rather than hard-coded model IDs."
+  ],
+  "verificationCommands": [
+    "npm test"
+  ],
+  "branch": "agent/web-first-multi-agent-project-mode",
+  "attempt": 1,
+  "lease": null,
+  "resultCommit": "1234567",
+  "createdAt": "2026-07-31T04:00:00Z",
+  "updatedAt": "2026-07-31T04:00:00Z"
+}
