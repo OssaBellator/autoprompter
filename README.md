@@ -1,6 +1,6 @@
 # AutoPrompter for ChatGPT
 
-Current release: **2.8.0**
+Current release: **3.0.0**
 
 - Detects ChatGPT’s current maximum-length notice and opens a best-effort successor even when no repository checkpoint exists.
 
@@ -25,7 +25,21 @@ AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that runs sele
 - Verified successor chats when a repository checkpoint is available, plus best-effort fresh-chat recovery for actual context-limit failures that occur before a checkpoint can be created.
 - Incremental durability instructions that ask the selected repository tool to commit completed logical units before lengthy or risky work continues.
 - Default-on automatic circuit breaker for rate limits, account restrictions, and safety blocks, with an explicit disable option for false-positive troubleshooting.
-- Draft Project Mode on the development branch: strict planner/result/reviewer/integration envelopes, deterministic worker leases, bounded revisions, dependency progression, explicit completion approval, and opt-in ChatGPT Web worker dispatch after manual model verification. It does not automate model selection or merge/publish actions.
+- Project Mode automatically creates or initializes planner, reviewer, and integrator chats, submits the planner prompt, repairs malformed planner JSON up to three times, validates and approves only schema-safe plans, starts the local project, and prepares worker assignments. Worker dispatch still requires manual model verification; merge, release, workflow, permission, and other external actions remain approval-gated.
+
+
+## Autonomous Project Mode bootstrap
+
+Creating a project draft now starts a durable browser-backed bootstrap pipeline:
+
+1. Leave planner, reviewer, and integrator selectors on **Create automatically**, or select existing chats to reuse.
+2. AutoPrompter opens one inactive ChatGPT Web tab for each role and initializes it with a bounded role prompt.
+3. The planner prompt is submitted automatically in the planner chat.
+4. The returned envelope is parsed and schema-validated. Malformed JSON or schema violations trigger up to three correction prompts in the same planner chat; no manual copy/paste is required.
+5. Only a valid plan is approved. When worker chats are available, the project is started locally and its first bounded assignment wave is prepared automatically.
+6. Sending worker assignments still requires the user to verify the selected model in each worker chat. AutoPrompter does not automate model selection or bypass platform limits.
+
+The role chats use the model ChatGPT selects for a new conversation or the model already configured in a reused conversation. Manual planner controls remain available as a recovery path, and **Run automatic bootstrap** can retry a saved draft after a transient failure.
 
 ## Install in Edge
 
@@ -132,7 +146,7 @@ The tests cover URL and repository validation, scheduler eligibility, successor 
 
 ## Future architecture
 
-See [`docs/MULTI_AGENT_ROADMAP.md`](docs/MULTI_AGENT_ROADMAP.md) for a planned, supported-interface multi-agent design. It deliberately avoids implementing model-picker automation or temporary worker-chat orchestration in this release.
+See [`docs/MULTI_AGENT_ROADMAP.md`](docs/MULTI_AGENT_ROADMAP.md) for the remaining web-first orchestration roadmap. Model-picker automation remains intentionally excluded; role and worker chats use the current ChatGPT Web model configuration.
 
 ## Known limitations
 

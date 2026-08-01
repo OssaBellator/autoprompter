@@ -1,8 +1,8 @@
 {
   "name": "autoprompter",
-  "version": "2.8.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "Edge extension for concurrent multi-chat ChatGPT continuation with fresh-start recovery, current maximum-length rollover, and repository-backed handoffs.",
+  "description": "Web-first ChatGPT subscription multi-agent orchestration with autonomous role bootstrap, planner repair, concurrent workers, and guarded project integration.",
   "scripts": {
     "test": "node --test",
     "check": "node --check planner-protocol.js && node --check worker-protocol.js && node --check result-protocol.js && node --check reviewer-protocol.js && node --check integration-protocol.js && node --check approval-protocol.js && node --check reconciliation-protocol.js && node --check project-store.js && node --check background.js && node --check content.js && node --check popup.js"

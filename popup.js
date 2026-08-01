@@ -38,7 +38,7 @@ const elements = Object.fromEntries([
   "projectStatusBadge", "projectStatusMeta", "projectInspectOutput", "pauseProject", "resumeProject",
   "cancelProject", "projectTitle", "projectGoal", "projectRepository", "projectPlannerChat",
   "projectReviewerChat", "projectIntegratorChat", "projectWorkerHint", "createProject", "projectMessage",
-  "plannerWorkbench", "buildPlannerPrompt", "plannerPromptOutput", "plannerResponseInput",
+  "plannerWorkbench", "bootstrapProject", "buildPlannerPrompt", "plannerPromptOutput", "plannerResponseInput",
   "validatePlannerOutput", "approveProjectPlan", "discardProjectPlan", "plannerPlanSummary",
   "workerWorkbench", "startProjectMode", "prepareProjectAssignments", "recoverProjectLeases",
   "projectWorkerState", "projectDispatchSelect", "projectDispatchPrompt", "projectModelVerified",
@@ -66,7 +66,7 @@ let wasRunning = false;
 let projectState = {
   projects: [], activeProjectId: null, project: null, events: [],
   pendingPlan: null, approvedPlan: null, tasks: {}, dispatches: {}, results: {}, reviews: {}, integration: null,
-  approvals: {}, reconciliation: null, runtimeSummary: null,
+  approvals: {}, reconciliation: null, runtimeSummary: null, bootstrap: null,
   plannerPromptProjectId: ""
 };
 
@@ -159,7 +159,7 @@ function refreshProjectRoleOptions() {
     select.textContent = "";
     const blank = document.createElement("option");
     blank.value = "";
-    blank.textContent = "Unassigned";
+    blank.textContent = "Create automatically";
     select.append(blank);
     for (const chat of catalog) {
       const option = document.createElement("option");
@@ -184,7 +184,7 @@ function projectWorkerIds() {
 function updateProjectWorkerHint() {
   if (!elements.projectWorkerHint) return;
   const count = projectWorkerIds().length;
-  elements.projectWorkerHint.textContent = `${count} selected chat${count === 1 ? "" : "s"} will be stored as workers. Fixed-role chats are excluded automatically.`;
+  elements.projectWorkerHint.textContent = `${count} selected chat${count === 1 ? "" : "s"} will be stored as workers. Leave fixed roles on Create automatically for fresh role chats.`;
 }
 
 function renderProjectWorkerState(project, tasks, dispatches, runtimeSummary) {
@@ -347,6 +347,7 @@ function renderProjectState() {
     integration,
     pendingApprovalCount: Object.values(approvals).filter(item => item.status === "pending").length,
     reconciliation,
+    autonomousBootstrap: projectState.bootstrap,
     recentEvents: (projectState.events || []).slice(-8)
   }, null, 2);
   elements.pauseProject.disabled = !["draft", "planning", "ready", "running"].includes(project.status);
@@ -356,6 +357,7 @@ function renderProjectState() {
   const terminal = ["completed", "failed", "cancelled"].includes(project.status);
   const planningBlocked = terminal || project.status === "paused";
   elements.plannerWorkbench.hidden = false;
+  elements.bootstrapProject.disabled = planningBlocked || Boolean(projectState.approvedPlan) || ["starting", "running"].includes(projectState.bootstrap?.status);
   elements.buildPlannerPrompt.disabled = planningBlocked || Boolean(projectState.approvedPlan);
   elements.validatePlannerOutput.disabled = planningBlocked || Boolean(projectState.approvedPlan) || !elements.plannerResponseInput.value.trim();
   elements.approveProjectPlan.disabled = planningBlocked || !projectState.pendingPlan || Boolean(projectState.approvedPlan);
@@ -412,6 +414,7 @@ async function refreshProjects({ inspectActive = true } = {}) {
     projectState.approvals = {};
     projectState.reconciliation = null;
     projectState.runtimeSummary = null;
+    projectState.bootstrap = null;
     renderProjectState();
   }
 }
@@ -430,6 +433,7 @@ async function inspectProject(projectId = elements.projectSelect.value) {
     projectState.approvals = {};
     projectState.reconciliation = null;
     projectState.runtimeSummary = null;
+    projectState.bootstrap = null;
     renderProjectState();
     return;
   }
@@ -448,6 +452,16 @@ async function inspectProject(projectId = elements.projectSelect.value) {
   projectState.approvals = response.approvals || {};
   projectState.reconciliation = response.reconciliation || null;
   projectState.runtimeSummary = response.runtimeSummary || null;
+  const bootstrapResponse = await runtimeMessage("GET_PROJECT_BOOTSTRAP", { projectId });
+  projectState.bootstrap = bootstrapResponse.ok === false ? null : (bootstrapResponse.bootstrap || null);
+  if (projectState.bootstrap?.status === "running") {
+    const planner = projectState.bootstrap.roles?.planner;
+    elements.projectMessage.textContent = planner?.status || "Autonomous project bootstrap is running.";
+  } else if (projectState.bootstrap?.status === "completed") {
+    elements.projectMessage.textContent = "Role chats created and the planner plan was validated and approved automatically.";
+  } else if (projectState.bootstrap?.status === "failed") {
+    elements.projectMessage.textContent = projectState.bootstrap.error || "Autonomous project bootstrap failed.";
+  }
   if (projectState.plannerPromptProjectId && projectState.plannerPromptProjectId !== projectId) {
     elements.plannerPromptOutput.value = "";
     projectState.plannerPromptProjectId = "";
@@ -475,8 +489,21 @@ async function createProjectDraft() {
   projectState.activeProjectId = created.projectId;
   projectState.project = created.project;
   projectState.events = [];
-  elements.projectMessage.textContent = `Created ${created.projectId}. No chats were dispatched.`;
+  elements.projectMessage.textContent = `Created ${created.projectId}. Creating role chats and running the planner automatically…`;
+  const bootstrapResponse = await runtimeMessage("START_PROJECT_BOOTSTRAP", { projectId: created.projectId });
+  if (bootstrapResponse.ok === false) throw new Error(bootstrapResponse.error || "Could not start autonomous Project Mode bootstrap.");
+  projectState.bootstrap = bootstrapResponse.bootstrap || null;
   await inspectProject(created.projectId);
+}
+
+async function runAutonomousProjectBootstrap() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) throw new Error("Choose a project first.");
+  elements.projectMessage.textContent = "Creating or initializing role chats and running the planner automatically…";
+  const response = await runtimeMessage("START_PROJECT_BOOTSTRAP", { projectId });
+  if (response.ok === false) throw new Error(response.error || "Could not start autonomous Project Mode bootstrap.");
+  projectState.bootstrap = response.bootstrap || null;
+  await inspectProject(projectId);
 }
 
 async function generatePlannerPrompt() {
@@ -1042,9 +1069,14 @@ async function stop() {
   catch (error) { renderStatus({ ok: false, error: error.message, running: false }); }
 }
 
+let projectRefreshTick = 0;
 async function refreshState() {
   try { renderStatus(await runtimeMessage("GET_SCHEDULER_STATE")); }
   catch (error) { renderStatus({ ok: false, error: error.message, running: false }); }
+  projectRefreshTick += 1;
+  if (projectState.activeProjectId && projectRefreshTick % 2 === 0) {
+    try { await inspectProject(projectState.activeProjectId); } catch { /* popup may be closing */ }
+  }
 }
 
 async function saveChatEditor() {
@@ -1094,6 +1126,7 @@ elements.projectSelect.addEventListener("change", () => inspectProject().catch(e
 elements.pauseProject.addEventListener("click", () => transitionProject("PAUSE_PROJECT").catch(error => { elements.projectMessage.textContent = error.message; }));
 elements.resumeProject.addEventListener("click", () => transitionProject("RESUME_PROJECT").catch(error => { elements.projectMessage.textContent = error.message; }));
 elements.cancelProject.addEventListener("click", () => transitionProject("CANCEL_PROJECT").catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.bootstrapProject.addEventListener("click", () => runAutonomousProjectBootstrap().catch(error => { elements.projectMessage.textContent = error.message; }));
 elements.buildPlannerPrompt.addEventListener("click", () => generatePlannerPrompt().catch(error => { elements.projectMessage.textContent = error.message; }));
 elements.validatePlannerOutput.addEventListener("click", () => validatePlannerResponse().catch(error => { elements.projectMessage.textContent = error.message; }));
 elements.approveProjectPlan.addEventListener("click", () => approvePendingProjectPlan().catch(error => { elements.projectMessage.textContent = error.message; }));

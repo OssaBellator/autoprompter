@@ -1,8 +1,8 @@
 # Autonomous Project Bootstrap
 
-This branch converts Project Mode creation into an automated, subscription-backed ChatGPT Web bootstrap pipeline.
+AutoPrompter 3.0 converts Project Mode creation into an automated, subscription-backed ChatGPT Web bootstrap pipeline.
 
-Planned behavior:
+Behavior:
 
 1. Create fresh planner, reviewer, and integrator ChatGPT conversations when role chats are not supplied.
 2. Send bounded role initialization prompts and persist the verified conversation IDs.
@@ -11,3 +11,7 @@ Planned behavior:
 5. On malformed JSON, send a bounded repair prompt to the same planner chat and retry.
 6. Approve only schema-valid plans, then materialize tasks.
 7. Keep model selection, destructive repository actions, and platform-limit handling fail-closed.
+
+## Implemented pipeline
+
+Project creation now starts an asynchronous browser-backed bootstrap. It creates or reuses the three fixed-role chats, verifies their conversation IDs, initializes their roles, submits the planner prompt, and retries malformed planner envelopes up to three times. Only a schema-valid plan is approved and materialized. When worker chats exist, the local project starts and its first assignment wave is prepared without sending those worker prompts.

@@ -1366,6 +1366,73 @@
     }
   }
 
+
+  async function executeProjectBootstrapJob(message, controller) {
+    const signal = controller.signal;
+    const status = value => runtimeMessage({
+      type: "PROJECT_BOOTSTRAP_STATUS",
+      projectId: message.projectId,
+      role: message.role,
+      stage: message.stage,
+      jobId: message.jobId,
+      status: value
+    });
+    try {
+      let baseline;
+      if (message.expectedConversationId) {
+        const current = conversationInfo();
+        if (!current || current.id !== message.expectedConversationId) {
+          throw new Error(`The managed ${message.role} tab opened a different conversation.`);
+        }
+        baseline = await waitForCompletedAssistant({ signal, settings: message.settings, status });
+      } else {
+        const ready = await ensureFreshConversation({ signal, status, requestId: message.freshRequestId || message.jobId });
+        if (!ready) return;
+        baseline = assistantSnapshot();
+      }
+      const completed = await submitPrompt({
+        prompt: message.prompt,
+        signal,
+        status,
+        settings: message.settings,
+        baseline,
+        expectedConversationId: message.expectedConversationId || null,
+        allowConversationChange: !message.expectedConversationId,
+        delaySeconds: 0
+      });
+      const conversation = message.expectedConversationId
+        ? conversationInfo()
+        : await waitUntil(() => conversationInfo(), {
+            timeoutMs: 30000,
+            signal,
+            checkInterruption: () => detectInterruption(message.settings, completed),
+            onWait: () => status(`Waiting for the ${message.role} conversation URL`)
+          });
+      const response = await runtimeMessage({
+        type: "PROJECT_BOOTSTRAP_RESULT",
+        projectId: message.projectId,
+        role: message.role,
+        stage: message.stage,
+        jobId: message.jobId,
+        conversation,
+        output: completed.text,
+        assistantSignature: completed.signature
+      });
+      if (!response || response.ok === false) throw new Error(response?.error || "Project bootstrap result could not be recorded.");
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+      await runtimeMessage({
+        type: "PROJECT_BOOTSTRAP_ERROR",
+        projectId: message.projectId,
+        role: message.role,
+        stage: message.stage,
+        jobId: message.jobId,
+        kind: error instanceof JobInterruption ? error.kind : "runtime_error",
+        error: error?.message || String(error)
+      });
+    }
+  }
+
   function startJob(message) {
     if (activeJob?.jobId === message.jobId) return;
     activeJob?.controller.abort();
@@ -1373,7 +1440,9 @@
     activeJob = { jobId: message.jobId, controller };
     const runner = message.type === "RUN_SUCCESSOR_JOB"
       ? executeSuccessorJob
-      : message.type === "RUN_PROJECT_SUCCESSOR_TASK"
+      : message.type === "RUN_PROJECT_BOOTSTRAP_JOB"
+        ? executeProjectBootstrapJob
+        : message.type === "RUN_PROJECT_SUCCESSOR_TASK"
         ? executeProjectSuccessorTask
         : message.type === "RUN_PROJECT_TASK"
           ? executeProjectTask
@@ -1393,7 +1462,7 @@
       sendResponse(selectorHealth());
       return false;
     }
-    if (message?.type === "RUN_CHAT_JOB" || message?.type === "RUN_SUCCESSOR_JOB" || message?.type === "RUN_PROJECT_TASK" || message?.type === "RUN_PROJECT_SUCCESSOR_TASK") {
+    if (message?.type === "RUN_CHAT_JOB" || message?.type === "RUN_SUCCESSOR_JOB" || message?.type === "RUN_PROJECT_TASK" || message?.type === "RUN_PROJECT_SUCCESSOR_TASK" || message?.type === "RUN_PROJECT_BOOTSTRAP_JOB") {
       startJob(message);
       sendResponse({ ok: true, jobId: message.jobId });
       return false;

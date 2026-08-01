@@ -1,6 +1,6 @@
-# Project Mode development status
+# Project Mode status
 
-Project Mode is being developed on `agent/web-first-multi-agent-project-mode`. It remains separate from the released extension. Worker dispatch is explicit and subscription-backed through ChatGPT Web; planner, reviewer, integrator, repository-action, and model-selection boundaries remain user controlled.
+Project Mode is part of AutoPrompter 3.0 and uses subscription-backed ChatGPT Web. Project creation automatically bootstraps planner, reviewer, and integrator chats, validates and repairs planner output, and prepares the first eligible worker assignments. Worker dispatch remains explicit and model-verified; repository side effects remain approval-gated.
 
 ## Completed milestones
 
@@ -17,6 +17,8 @@ Project Mode is being developed on `agent/web-first-multi-agent-project-mode`. I
 11. **Generation-state reconciliation and renewable heartbeats** — the composer Stop/Voice control, assistant-text growth, activity elapsed values, and control-state transitions are tracked independently. Decorative tool-card animation is ignored. Stable output with the composer back in Voice mode closes the job, while genuine progress renews both the page wait and Project Mode lease.
 12. **Selector-health reporting and recoverable overlays** — open ChatGPT tabs can report composer, send, Stop, Voice, new-chat, notice, and conversation selector health. Connection interruptions and the non-selectable extended-thinking notice use bounded same-chat continuation without consuming completed-work progress.
 
+13. **Autonomous role and planner bootstrap** — project creation can create or reuse planner, reviewer, and integrator chats, initialize their roles, submit the planner prompt, retry malformed planner JSON up to three times, approve only a schema-valid plan, and prepare the first worker wave without manual copy/paste.
+
 ## Generation completion and long-response behavior
 
 A worker is no longer considered active merely because a tool card continues pulsing. AutoPrompter prefers the composer control state: a visible Voice mode control indicates idle even when a stale Stop node remains in the DOM. Assistant text changes, activity-panel elapsed-time changes, and generation-control transitions count as progress heartbeats. CSS animation and shadow changes do not.
@@ -29,9 +31,9 @@ Model selection is never automated; the user must verify each worker chat's conf
 
 ## Validation
 
-The reliability and control frontier passed **105 automated tests**, JavaScript syntax checks, JSON validation, three-way patch validation, compressed-payload checksum verification, and exact Git blob verification before the source commit was created.
+The autonomous bootstrap and reliability frontier passed **115 automated tests**, JavaScript syntax checks, JSON validation, three-way patch validation, compressed-payload checksum verification, and exact Git blob verification before the source commit was created.
 
-Regression coverage includes Voice-over-Stale-Stop precedence, activity elapsed parsing, ignored tool-card animation, stable idle completion, renewable long-response heartbeats, Project Mode lease renewal, integration retries, explicit approval records, repository reconciliation, selector health, and context-successor lineage.
+Regression coverage includes automatic role-chat creation, strict role acknowledgement, malformed planner JSON repair, schema-gated approval, automatic local project start and assignment preparation, Voice-over-Stale-Stop precedence, renewable long-response heartbeats, integration retries, approval records, repository reconciliation, selector health, and context-successor lineage.
 
 A live authenticated multi-chat ChatGPT session has not been used for final end-to-end validation; selector-health reporting is available to diagnose future ChatGPT UI changes.
 
