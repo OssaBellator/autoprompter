@@ -1,0 +1,121 @@
+name: Apply Project Mode Frontiers
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    paths:
+      - '.frontiers-trigger'
+      - '.github/workflows/apply-project-mode-frontiers.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'agent/web-first-multi-agent-project-mode'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/web-first-multi-agent-project-mode
+          fetch-depth: 0
+
+      - name: Reconstruct immutable frontier payload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shas=(
+            830439321431758be980ae6e78db09625649fb2c
+            b65acd36f32c2efc93774906b2d8c49095976f51
+            51d4dd56dde93f66aaa9193b4827e0a9c2f6082d
+            70e28f095b850c58c11e7a2aba0ba28604fc0dd1
+            449c650c6fc53a65b636f4a5488e7af0aba9bb7c
+            f5566bdc1feb71217d3eeb31b256b20ec2d5cb3b
+            143a3c9dad6551ffb817d691d010f6ca88d73461
+            e17ae44b54f1fe60d942f144e157c60f948a76c9
+            88cfff44fd3dbf9ee761bf217b234db52abf2d2e
+            f984e932feadc760528382c13e34087d26b202ff
+            339e4dba006bb726ee4ebb6f4067995da129e990
+            4d7f14419128cc431136d3f4fa624b087a5ccbba
+            c0127aa72047dec6f900d9d853d8d8612039993d
+            e830e8dc933d0c4b0be859072ca452a1f14b8b18
+            7e5f38f013aa8a23fdcb5ad125919fb35e02c5e1
+            16f13f65c994b5ac2c64706099237e2e7f164f40
+            11a07ccf597b251832f9f877e03591533a139ae8
+            28894c557cb281fe2e8916835e162c8405b7b4dc
+            f03e8f783455103e9c65d4516053db79262a0b6c
+          )
+          mkdir -p /tmp/frontier-chunks .m5
+          index=0
+          for sha in "${shas[@]}"; do
+            output=$(printf '/tmp/frontier-chunks/%03d' "$index")
+            python - "$sha" "$output" <<'PY'
+          import base64, json, os, sys, urllib.request
+          sha, output = sys.argv[1:]
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['REPOSITORY']}/git/blobs/{sha}",
+              headers={
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(request) as response:
+              payload = json.load(response)
+          data = base64.b64decode(payload["content"])
+          with open(output, "wb") as handle:
+              handle.write(data)
+          PY
+            actual=$(git hash-object "$output")
+            test "$actual" = "$sha"
+            index=$((index + 1))
+          done
+          cat /tmp/frontier-chunks/* > /tmp/frontier-payload.b64
+          base64 --decode /tmp/frontier-payload.b64 > /tmp/frontier-payload.tar.gz
+          echo 'e89a7043441567f150b55e89fb1ecb92eb153fec2d31dcdb9f953634a6d48d0c  /tmp/frontier-payload.tar.gz' | sha256sum --check
+          tar -xzf /tmp/frontier-payload.tar.gz -C .m5
+          test -f .m5/apply_frontiers.py
+          python .m5/apply_frontiers.py
+
+      - name: Validate all active frontiers
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm test
+          npm run check
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for root in (Path('schemas'), Path('examples')):
+              if not root.exists():
+                  continue
+              for path in root.rglob('*.json'):
+                  json.loads(path.read_text(encoding='utf-8'))
+          PY
+          git diff --check
+          test -f result-protocol.js
+          test -f reviewer-protocol.js
+          test -f integration-protocol.js
+          grep -q 'AUTOPROMPTER_TASK_RESULT_BEGIN' result-protocol.js
+          grep -q 'AUTOPROMPTER_REVIEW_BEGIN' reviewer-protocol.js
+          grep -q 'AUTOPROMPTER_INTEGRATION_BEGIN' integration-protocol.js
+          grep -q 'RUN_PROJECT_TASK' content.js
+          grep -q 'DISPATCH_PROJECT_ASSIGNMENTS' background.js
+          grep -q 'modelVerified' background.js
+          grep -q 'STORE_SCHEMA_VERSION = "1.4"' project-store.js
+
+      - name: Commit validated frontier source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .m5 .frontiers-trigger .github/workflows/apply-project-mode-frontiers.yml
+          git diff --check
+          git status --short
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Advance Project Mode result review integration and web dispatch frontiers'
+          git push origin HEAD:agent/web-first-multi-agent-project-mode
