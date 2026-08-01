@@ -7,20 +7,18 @@
 })(typeof globalThis !== "undefined" ? globalThis : self, () => {
   const INTEGRATION_BEGIN = "AUTOPROMPTER_INTEGRATION_BEGIN";
   const INTEGRATION_END = "AUTOPROMPTER_INTEGRATION_END";
-  const INTEGRATION_SCHEMA_VERSION = "1.0";
+  const INTEGRATION_SCHEMA_VERSION = "1.1";
   const MAX_INTEGRATION_OUTPUT_CHARS = 120000;
-  const MAX_INTEGRATOR_PROMPT_CHARS = 24000;
+  const MAX_INTEGRATOR_PROMPT_CHARS = 28000;
   const ROOT_KEYS = [
-    "schemaVersion", "projectId", "planRevision", "status", "summary", "branch", "commit",
-    "includedTasks", "tests", "conflicts", "risks", "producedAt"
+    "schemaVersion", "integrationId", "integrationAttempt", "projectId", "planRevision", "status",
+    "summary", "branch", "commit", "includedTasks", "tests", "conflicts", "risks", "producedAt"
   ];
   const TEST_KEYS = ["command", "status", "summary"];
   const STATUSES = new Set(["completed", "blocked", "failed"]);
   const TEST_STATUSES = new Set(["passed", "failed", "not_run"]);
 
-  function assert(condition, message) {
-    if (!condition) throw new Error(message);
-  }
+  function assert(condition, message) { if (!condition) throw new Error(message); }
   function assertExactKeys(value, expected, label) {
     assert(value && typeof value === "object" && !Array.isArray(value), `${label} must be an object.`);
     const actual = Object.keys(value).sort();
@@ -40,6 +38,17 @@
     const normalized = value.map((item, index) => assertString(item, `${label}[${index}]`, 1, itemMax));
     if (unique) assert(new Set(normalized).size === normalized.length, `${label} must not contain duplicates.`);
     return normalized;
+  }
+  function stableHash(value) {
+    let hash = 0x811c9dc5;
+    for (const char of String(value || "")) {
+      hash ^= char.charCodeAt(0);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return hash.toString(36).padStart(7, "0");
+  }
+  function buildIntegrationId(projectId, planRevision, attempt) {
+    return `integration-${projectId}-r${planRevision}-a${attempt}-${stableHash(`${projectId}|${planRevision}|${attempt}`)}`.slice(0, 200);
   }
   function countMarker(text, marker) { return text.split(marker).length - 1; }
   function parseIntegrationEnvelope(output) {
@@ -65,9 +74,11 @@
     return raw;
   }
 
-  function buildIntegratorPrompt(project, plan, tasks, results, reviews) {
+  function buildIntegratorPrompt(project, plan, tasks, results, reviews, attemptContext = {}) {
     const acceptedTasks = Object.values(tasks).filter(task => task.status === "accepted");
     assert(acceptedTasks.length === Object.keys(tasks).length && acceptedTasks.length > 0, "Every task must be accepted before integration.");
+    const attempt = Math.max(1, Math.min(20, Math.round(Number(attemptContext.attempt) || 1)));
+    const integrationId = attemptContext.integrationId || buildIntegrationId(project.projectId, plan.revision, attempt);
     const evidence = acceptedTasks.map(task => {
       const dispatchId = task.acceptedDispatchId;
       return {
@@ -79,17 +90,26 @@
         review: reviews[dispatchId]
       };
     });
+    const previous = attemptContext.previous || null;
+    const requiredChanges = Array.isArray(attemptContext.requiredChanges) ? attemptContext.requiredChanges : [];
     const prompt = [
       "You are the bounded integrator for an AutoPrompter Project Mode project running through ChatGPT Web.",
       "Inspect the accepted branches and commits. Integrate only reviewed work, resolve straightforward conflicts conservatively, and run project-wide validation.",
-      "Do not merge to the default branch, publish a release, delete branches, or change permissions. Produce an integration branch and evidence only.",
+      "Do not merge to the default branch, publish a release, delete branches, modify workflows, or change permissions. Produce an integration branch and evidence only.",
+      "When a conflict cannot be resolved without changing reviewed scope, return blocked with exact conflicts instead of guessing.",
       "",
       `Project: ${project.title}`,
       `Project ID: ${project.projectId}`,
       `Repository: ${project.repository.slug}`,
       `Default branch: ${project.repository.defaultBranch}`,
       `Plan revision: ${plan.revision}`,
-      `Suggested integration branch: agent/${project.projectId}/integration-r${plan.revision}`,
+      `Integration attempt: ${attempt}`,
+      `Integration ID: ${integrationId}`,
+      `Suggested integration branch: agent/${project.projectId}/integration-r${plan.revision}-a${attempt}`,
+      previous ? "Previous integration evidence" : "",
+      previous ? JSON.stringify(previous, null, 2) : "",
+      requiredChanges.length ? "Required retry changes" : "",
+      requiredChanges.length ? requiredChanges.map(item => `- ${item}`).join("\n") : "",
       "",
       "Accepted task evidence",
       JSON.stringify(evidence, null, 2),
@@ -98,11 +118,13 @@
       INTEGRATION_BEGIN,
       JSON.stringify({
         schemaVersion: INTEGRATION_SCHEMA_VERSION,
+        integrationId,
+        integrationAttempt: attempt,
         projectId: project.projectId,
         planRevision: plan.revision,
         status: "completed | blocked | failed",
         summary: "concise integration result",
-        branch: `agent/${project.projectId}/integration-r${plan.revision}`,
+        branch: `agent/${project.projectId}/integration-r${plan.revision}-a${attempt}`,
         commit: "commit SHA or null",
         includedTasks: acceptedTasks.map(task => task.id),
         tests: [{ command: "project-wide command", status: "passed | failed | not_run", summary: "evidence" }],
@@ -111,14 +133,16 @@
         producedAt: "canonical ISO-8601 timestamp"
       }, null, 2),
       INTEGRATION_END
-    ].join("\n");
+    ].filter(Boolean).join("\n");
     assert(prompt.length <= MAX_INTEGRATOR_PROMPT_CHARS, `Integrator prompt exceeds ${MAX_INTEGRATOR_PROMPT_CHARS} characters.`);
-    return prompt;
+    return { prompt, integrationId, attempt };
   }
 
-  function validateIntegration(input, { project, plan, tasks }) {
+  function validateIntegration(input, { project, plan, tasks, expectedIntegrationId, expectedAttempt }) {
     assertExactKeys(input, ROOT_KEYS, "Integration result");
     assert(input.schemaVersion === INTEGRATION_SCHEMA_VERSION, `Integration schemaVersion must be ${INTEGRATION_SCHEMA_VERSION}.`);
+    assert(input.integrationId === expectedIntegrationId, "Integration result integrationId does not match the active attempt.");
+    assert(Number.isInteger(input.integrationAttempt) && input.integrationAttempt === expectedAttempt, "Integration result attempt does not match the active attempt.");
     assert(input.projectId === project?.projectId, "Integration result projectId does not match.");
     assert(Number.isInteger(input.planRevision) && input.planRevision === plan?.revision, "Integration result planRevision does not match.");
     assert(STATUSES.has(input.status), "Integration result status is unsupported.");
@@ -147,9 +171,12 @@
     if (input.status === "completed") assert(tests.length > 0 && tests.every(test => test.status === "passed"), "Completed integration must include passing project-wide test evidence.");
     const conflicts = assertStringArray(input.conflicts, "Integration conflicts", { max: 50, itemMax: 2000 });
     if (input.status === "completed") assert(conflicts.length === 0, "Completed integration cannot contain unresolved conflicts.");
+    if (input.status === "blocked") assert(conflicts.length > 0, "Blocked integration must identify at least one conflict.");
     const risks = assertStringArray(input.risks, "Integration risks", { max: 50, itemMax: 2000 });
     return {
       schemaVersion: INTEGRATION_SCHEMA_VERSION,
+      integrationId: expectedIntegrationId,
+      integrationAttempt: expectedAttempt,
       projectId: project.projectId,
       planRevision: plan.revision,
       status: input.status,
@@ -174,6 +201,7 @@
     INTEGRATION_SCHEMA_VERSION,
     MAX_INTEGRATION_OUTPUT_CHARS,
     MAX_INTEGRATOR_PROMPT_CHARS,
+    buildIntegrationId,
     parseIntegrationEnvelope,
     buildIntegratorPrompt,
     validateIntegration,

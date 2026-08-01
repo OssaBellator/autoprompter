@@ -45,7 +45,13 @@ const elements = Object.fromEntries([
   "dispatchProjectAssignments", "projectResultInput", "submitProjectResult", "buildProjectReviewerPrompt",
   "projectReviewerPrompt", "projectReviewInput", "submitProjectReview", "buildProjectIntegratorPrompt",
   "projectIntegratorPrompt", "projectIntegrationInput", "submitProjectIntegration",
-  "approveProjectIntegration", "discardProjectIntegration"
+  "approveProjectIntegration", "discardProjectIntegration", "requestProjectIntegrationRetry",
+  "projectIntegrationRetryChanges", "projectApprovalAction", "projectApprovalTarget",
+  "projectApprovalJustification", "requestProjectApproval", "projectApprovalSelect",
+  "projectApprovalDecisionNote", "approveProjectAction", "rejectProjectAction",
+  "projectApprovalInstruction", "buildProjectReconciliationPrompt", "projectReconciliationPrompt",
+  "projectReconciliationInput", "submitProjectReconciliation", "projectReconciliationSummary",
+  "checkProjectSelectorHealth", "projectSelectorHealthOutput"
 ].map(id => [id, document.getElementById(id)]));
 
 let catalog = [];
@@ -59,7 +65,8 @@ let chatConfigPersistTimer = null;
 let wasRunning = false;
 let projectState = {
   projects: [], activeProjectId: null, project: null, events: [],
-  pendingPlan: null, approvedPlan: null, tasks: {}, dispatches: {}, results: {}, reviews: {}, integration: null, runtimeSummary: null,
+  pendingPlan: null, approvedPlan: null, tasks: {}, dispatches: {}, results: {}, reviews: {}, integration: null,
+  approvals: {}, reconciliation: null, runtimeSummary: null,
   plannerPromptProjectId: ""
 };
 
@@ -220,6 +227,43 @@ function renderProjectWorkerState(project, tasks, dispatches, runtimeSummary) {
     : "Prepared worker prompts remain local until a later dispatch milestone";
 }
 
+function renderProjectApprovalState(approvals) {
+  const previous = elements.projectApprovalSelect.value;
+  elements.projectApprovalSelect.textContent = "";
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = Object.keys(approvals).length ? "Choose an approval request" : "No approval requests";
+  elements.projectApprovalSelect.append(blank);
+  for (const approval of Object.values(approvals).sort((a, b) => String(b.requestedAt).localeCompare(String(a.requestedAt)))) {
+    const option = document.createElement("option");
+    option.value = approval.approvalId;
+    option.textContent = `${approval.action} · ${approval.target} · ${approval.status}`;
+    elements.projectApprovalSelect.append(option);
+  }
+  if ([...elements.projectApprovalSelect.options].some(option => option.value === previous)) {
+    elements.projectApprovalSelect.value = previous;
+  }
+  const selected = approvals[elements.projectApprovalSelect.value];
+  elements.projectApprovalInstruction.value = selected?.instruction || "";
+  elements.approveProjectAction.disabled = selected?.status !== "pending";
+  elements.rejectProjectAction.disabled = selected?.status !== "pending";
+}
+
+function renderProjectReconciliationState(project, reconciliation) {
+  const latest = reconciliation?.latest || null;
+  elements.projectReconciliationSummary.textContent = JSON.stringify({
+    required: Boolean(project.repositoryReconciliationRequired),
+    lastReconciledAt: project.lastReconciledAt || null,
+    latest: latest ? {
+      observedAt: latest.observedAt,
+      defaultBranchCommit: latest.defaultBranchCommit,
+      conflictCount: latest.conflictCount,
+      missingCount: latest.missingCount,
+      notes: latest.notes
+    } : null
+  }, null, 2);
+}
+
 function renderProjectState() {
   const projects = Array.isArray(projectState.projects) ? projectState.projects : [];
   const previous = elements.projectSelect.value || projectState.activeProjectId || "";
@@ -247,6 +291,8 @@ function renderProjectState() {
     elements.workerWorkbench.hidden = true;
     elements.projectWorkerState.textContent = "";
     elements.projectDispatchPrompt.value = "";
+    elements.projectApprovalInstruction.value = "";
+    elements.projectReconciliationSummary.textContent = "";
     return;
   }
   const tasks = projectState.tasks && typeof projectState.tasks === "object" ? projectState.tasks : {};
@@ -255,6 +301,8 @@ function renderProjectState() {
   const results = projectState.results && typeof projectState.results === "object" ? projectState.results : {};
   const reviews = projectState.reviews && typeof projectState.reviews === "object" ? projectState.reviews : {};
   const integration = projectState.integration || null;
+  const approvals = projectState.approvals && typeof projectState.approvals === "object" ? projectState.approvals : {};
+  const reconciliation = projectState.reconciliation || null;
   const pendingSummary = projectState.pendingPlan ? {
     revision: projectState.pendingPlan.revision,
     phases: projectState.pendingPlan.phases.length,
@@ -282,6 +330,8 @@ function renderProjectState() {
     resultCount: Object.keys(results).length,
     reviewCount: Object.keys(reviews).length,
     integration,
+    pendingApprovalCount: Object.values(approvals).filter(item => item.status === "pending").length,
+    reconciliation,
     recentEvents: (projectState.events || []).slice(-8)
   }, null, 2);
   elements.pauseProject.disabled = !["draft", "planning", "ready", "running"].includes(project.status);
@@ -317,7 +367,15 @@ function renderProjectState() {
   elements.submitProjectIntegration.disabled = !runtimeSummary?.integrationReady || !elements.projectIntegrationInput.value.trim();
   elements.approveProjectIntegration.disabled = integration?.pending?.status !== "completed";
   elements.discardProjectIntegration.disabled = !integration?.pending;
+  elements.requestProjectIntegrationRetry.disabled = !["blocked", "failed"].includes(integration?.pending?.status);
+  elements.requestProjectApproval.disabled = terminal
+    || !elements.projectApprovalTarget.value.trim()
+    || !elements.projectApprovalJustification.value.trim();
+  elements.buildProjectReconciliationPrompt.disabled = !projectState.approvedPlan;
+  elements.submitProjectReconciliation.disabled = !projectState.approvedPlan || !elements.projectReconciliationInput.value.trim();
   renderProjectWorkerState(project, tasks, dispatches, runtimeSummary);
+  renderProjectApprovalState(approvals);
+  renderProjectReconciliationState(project, reconciliation);
 }
 
 async function refreshProjects({ inspectActive = true } = {}) {
@@ -336,6 +394,8 @@ async function refreshProjects({ inspectActive = true } = {}) {
     projectState.results = {};
     projectState.reviews = {};
     projectState.integration = null;
+    projectState.approvals = {};
+    projectState.reconciliation = null;
     projectState.runtimeSummary = null;
     renderProjectState();
   }
@@ -352,6 +412,8 @@ async function inspectProject(projectId = elements.projectSelect.value) {
     projectState.results = {};
     projectState.reviews = {};
     projectState.integration = null;
+    projectState.approvals = {};
+    projectState.reconciliation = null;
     projectState.runtimeSummary = null;
     renderProjectState();
     return;
@@ -368,6 +430,8 @@ async function inspectProject(projectId = elements.projectSelect.value) {
   projectState.results = response.results || {};
   projectState.reviews = response.reviews || {};
   projectState.integration = response.integration || null;
+  projectState.approvals = response.approvals || {};
+  projectState.reconciliation = response.reconciliation || null;
   projectState.runtimeSummary = response.runtimeSummary || null;
   if (projectState.plannerPromptProjectId && projectState.plannerPromptProjectId !== projectId) {
     elements.plannerPromptOutput.value = "";
@@ -604,6 +668,81 @@ async function discardProjectIntegrationEvidence() {
   elements.projectIntegrationInput.value = "";
   elements.projectMessage.textContent = "Pending integration evidence discarded.";
   await inspectProject(projectId);
+}
+
+
+async function requestProjectIntegrationRetry() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) throw new Error("Choose a project first.");
+  const requiredChanges = elements.projectIntegrationRetryChanges.value.split(/\r?\n/).map(item => item.trim()).filter(Boolean);
+  const response = await runtimeMessage("REQUEST_PROJECT_INTEGRATION_RETRY", { projectId, requiredChanges });
+  if (response.ok === false) throw new Error(response.error || "Could not request an integration retry.");
+  elements.projectIntegrationInput.value = "";
+  elements.projectIntegratorPrompt.value = "";
+  elements.projectMessage.textContent = `Integration retry requested; attempt ${Number(response.integration.activeAttempt || 0) + 1} can now be generated.`;
+  await inspectProject(projectId);
+}
+
+async function requestExternalProjectApproval() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) throw new Error("Choose a project first.");
+  const approval = {
+    action: elements.projectApprovalAction.value,
+    target: elements.projectApprovalTarget.value.trim(),
+    justification: elements.projectApprovalJustification.value.trim()
+  };
+  const response = await runtimeMessage("REQUEST_PROJECT_APPROVAL", { projectId, approval });
+  if (response.ok === false) throw new Error(response.error || "Could not create the approval request.");
+  elements.projectApprovalTarget.value = "";
+  elements.projectApprovalJustification.value = "";
+  elements.projectMessage.textContent = `Added pending approval ${response.approval.approvalId}. No external action was executed.`;
+  await inspectProject(projectId);
+  elements.projectApprovalSelect.value = response.approval.approvalId;
+  renderProjectState();
+}
+
+async function decideExternalProjectApproval(decision) {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  const approvalId = elements.projectApprovalSelect.value;
+  if (!projectId || !approvalId) throw new Error("Choose a pending approval request first.");
+  const response = await runtimeMessage("DECIDE_PROJECT_APPROVAL", {
+    projectId,
+    approvalId,
+    decision,
+    note: elements.projectApprovalDecisionNote.value.trim()
+  });
+  if (response.ok === false) throw new Error(response.error || "Could not decide the approval request.");
+  elements.projectMessage.textContent = `${approvalId} was ${decision}. AutoPrompter did not execute the action.`;
+  await inspectProject(projectId);
+  elements.projectApprovalSelect.value = approvalId;
+  renderProjectState();
+}
+
+async function generateProjectReconciliationPrompt() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) throw new Error("Choose a project first.");
+  const response = await runtimeMessage("BUILD_PROJECT_RECONCILIATION_PROMPT", { projectId });
+  if (response.ok === false) throw new Error(response.error || "Could not generate the reconciliation prompt.");
+  elements.projectReconciliationPrompt.value = response.prompt;
+  elements.projectMessage.textContent = "Read-only reconciliation prompt generated. It does not change repository state.";
+}
+
+async function submitProjectReconciliationSnapshot() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  const output = elements.projectReconciliationInput.value.trim();
+  if (!projectId || !output) throw new Error("Choose a project and paste a reconciliation envelope first.");
+  const response = await runtimeMessage("SUBMIT_PROJECT_RECONCILIATION", { projectId, output });
+  if (response.ok === false) throw new Error(response.error || "Repository reconciliation validation failed.");
+  const latest = response.reconciliation.latest;
+  elements.projectMessage.textContent = `Repository snapshot validated: ${latest.conflictCount} conflicts and ${latest.missingCount} missing artifacts.`;
+  await inspectProject(projectId);
+}
+
+async function checkProjectSelectorHealth() {
+  const response = await runtimeMessage("GET_PROJECT_SELECTOR_HEALTH");
+  if (response.ok === false) throw new Error(response.error || "Selector health check failed.");
+  elements.projectSelectorHealthOutput.textContent = JSON.stringify(response, null, 2);
+  elements.projectMessage.textContent = `Checked ${response.tabs?.length || 0} open ChatGPT tab${response.tabs?.length === 1 ? "" : "s"}.`;
 }
 
 function configFor(chatId) {
@@ -963,7 +1102,18 @@ elements.buildProjectIntegratorPrompt.addEventListener("click", () => generatePr
 elements.submitProjectIntegration.addEventListener("click", () => submitProjectIntegrationEvidence().catch(error => { elements.projectMessage.textContent = error.message; }));
 elements.approveProjectIntegration.addEventListener("click", () => approveProjectCompletion().catch(error => { elements.projectMessage.textContent = error.message; }));
 elements.discardProjectIntegration.addEventListener("click", () => discardProjectIntegrationEvidence().catch(error => { elements.projectMessage.textContent = error.message; }));
-for (const input of [elements.projectResultInput, elements.projectReviewInput, elements.projectIntegrationInput]) input.addEventListener("input", renderProjectState);
+elements.requestProjectIntegrationRetry.addEventListener("click", () => requestProjectIntegrationRetry().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.requestProjectApproval.addEventListener("click", () => requestExternalProjectApproval().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.approveProjectAction.addEventListener("click", () => decideExternalProjectApproval("approved").catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.rejectProjectAction.addEventListener("click", () => decideExternalProjectApproval("rejected").catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.projectApprovalSelect.addEventListener("change", renderProjectState);
+elements.buildProjectReconciliationPrompt.addEventListener("click", () => generateProjectReconciliationPrompt().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.submitProjectReconciliation.addEventListener("click", () => submitProjectReconciliationSnapshot().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.checkProjectSelectorHealth.addEventListener("click", () => checkProjectSelectorHealth().catch(error => { elements.projectMessage.textContent = error.message; }));
+for (const input of [
+  elements.projectResultInput, elements.projectReviewInput, elements.projectIntegrationInput,
+  elements.projectApprovalTarget, elements.projectApprovalJustification, elements.projectReconciliationInput
+]) input.addEventListener("input", renderProjectState);
 elements.plannerResponseInput.addEventListener("input", renderProjectState);
 for (const select of projectRoleSelects()) select.addEventListener("change", updateProjectWorkerHint);
 for (const input of [elements.prompt, elements.delaySeconds, elements.maxContinuations, elements.notifyOnPromptDone, elements.repository, elements.handoffFile, elements.pluginInstruction, elements.contextCapacityTokens, elements.contextThresholdPercent, elements.stallMinutes, elements.maxRollovers, elements.checkpointBeforePrompt, elements.checkpointAfterPrompt]) input.addEventListener("change", () => saveSettings().catch(() => {}));

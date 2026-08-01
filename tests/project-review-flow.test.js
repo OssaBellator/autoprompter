@@ -193,13 +193,16 @@ test("results, revisions, accepted dependencies, and integration progress determ
 
   const integrator = Store.buildProjectIntegratorPrompt(store, projectId);
   assert.match(integrator.prompt, /Accepted task evidence/);
+  store = integrator.store;
   const integrationOutput = {
-    schemaVersion: "1.0",
+    schemaVersion: "1.1",
+    integrationId: integrator.integrationId,
+    integrationAttempt: integrator.integrationAttempt,
     projectId,
     planRevision: 1,
     status: "completed",
     summary: "Integrated both reviewed tasks.",
-    branch: `agent/${projectId}/integration-r1`,
+    branch: `agent/${projectId}/integration-r1-a1`,
     commit: "deadbeef1234567",
     includedTasks: ["task-a", "task-b"],
     tests: [{ command: "npm test", status: "passed", summary: "All tests passed." }],

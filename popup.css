@@ -154,3 +154,25 @@ select { width: 100%; margin-top: 6px; padding: 8px; border: 1px solid color-mix
 .project-dispatch-confirmation input { width: auto; margin-top: 2px; }
 .result-review-workbench, .integration-workbench { display: grid; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, CanvasText 14%, transparent); }
 .result-review-workbench textarea, .integration-workbench textarea { min-height: 110px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+
+.approval-workbench,
+.reconciliation-workbench,
+.selector-health-workbench {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+}
+.approval-workbench textarea,
+.reconciliation-workbench textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.reconciliation-workbench pre,
+.selector-health-workbench pre {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -1,11 +1,13 @@
 "use strict";
 
-if (typeof importScripts === "function") importScripts("planner-protocol.js", "worker-protocol.js", "result-protocol.js", "reviewer-protocol.js", "integration-protocol.js", "project-store.js");
+if (typeof importScripts === "function") importScripts("planner-protocol.js", "worker-protocol.js", "result-protocol.js", "reviewer-protocol.js", "integration-protocol.js", "approval-protocol.js", "reconciliation-protocol.js", "project-store.js");
 const PlannerProtocol = globalThis.AutoPrompterPlannerProtocol || (typeof require === "function" ? require("./planner-protocol.js") : null);
 const WorkerProtocol = globalThis.AutoPrompterWorkerProtocol || (typeof require === "function" ? require("./worker-protocol.js") : null);
 const ResultProtocol = globalThis.AutoPrompterResultProtocol || (typeof require === "function" ? require("./result-protocol.js") : null);
 const ReviewerProtocol = globalThis.AutoPrompterReviewerProtocol || (typeof require === "function" ? require("./reviewer-protocol.js") : null);
 const IntegrationProtocol = globalThis.AutoPrompterIntegrationProtocol || (typeof require === "function" ? require("./integration-protocol.js") : null);
+const ApprovalProtocol = globalThis.AutoPrompterApprovalProtocol || (typeof require === "function" ? require("./approval-protocol.js") : null);
+const ReconciliationProtocol = globalThis.AutoPrompterReconciliationProtocol || (typeof require === "function" ? require("./reconciliation-protocol.js") : null);
 const ProjectStore = globalThis.AutoPrompterProjectStore || (typeof require === "function" ? require("./project-store.js") : null);
 
 const MESSAGE_SCOPE = "AUTOPROMPTER_RUNTIME";
@@ -41,6 +43,7 @@ const DEFAULTS = Object.freeze({
 });
 
 let operationQueue = Promise.resolve();
+let projectStoreStartupChecked = false;
 const initialBatchTimers = new Map();
 
 function enqueue(operation) {
@@ -304,8 +307,24 @@ async function loadProjectStore() {
   const stored = await chrome.storage.local.get(ProjectStore.PROJECTS_KEY);
   const migrated = ProjectStore.migrateStore(stored?.[ProjectStore.PROJECTS_KEY]);
   const recovered = ProjectStore.recoverAllProjectLeases(migrated.store);
-  if (migrated.migrated || recovered.changed) await saveProjectStore(recovered.store);
-  return recovered.store;
+  let store = recovered.store;
+  let changed = migrated.migrated || recovered.changed;
+  if (!projectStoreStartupChecked) {
+    projectStoreStartupChecked = true;
+    for (const [projectId, project] of Object.entries(store.projects || {})) {
+      const hasDurableArtifacts = Object.keys(store.resultsByProject?.[projectId] || {}).length
+        || Object.values(store.tasksByProject?.[projectId] || {}).some(task => task.status === "accepted")
+        || Boolean(store.integrationsByProject?.[projectId]);
+      if (project.status === "running" && hasDurableArtifacts
+          && (!project.lastReconciledAt || Date.parse(project.updatedAt) > Date.parse(project.lastReconciledAt))) {
+        const marked = ProjectStore.markRepositoryReconciliationRequired(store, projectId, "Extension runtime restarted with durable task or integration artifacts");
+        store = marked.store;
+        changed = true;
+      }
+    }
+  }
+  if (changed) await saveProjectStore(store);
+  return store;
 }
 
 async function saveProjectStore(store) {
@@ -352,6 +371,8 @@ async function inspectProjectState(projectId) {
     results: result.results,
     reviews: result.reviews,
     integration: result.integration,
+    approvals: result.approvals,
+    reconciliation: result.reconciliation,
     runtimeSummary: result.runtimeSummary
   };
 }
@@ -522,7 +543,8 @@ async function submitProjectReviewState(projectId, dispatchId, output) {
 async function buildProjectIntegratorPromptState(projectId) {
   const store = await loadProjectStore();
   const result = ProjectStore.buildProjectIntegratorPrompt(store, projectId);
-  return { project: result.project, prompt: result.prompt };
+  await saveProjectStore(result.store);
+  return { project: result.project, prompt: result.prompt, integrationId: result.integrationId, integrationAttempt: result.integrationAttempt, integration: result.integration };
 }
 
 async function submitProjectIntegrationState(projectId, output) {
@@ -565,6 +587,54 @@ async function discardProjectIntegrationState(projectId) {
     integration: result.integration,
     runtimeSummary: result.runtimeSummary
   };
+}
+
+async function requestProjectIntegrationRetryState(projectId, requiredChanges) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.requestProjectIntegrationRetry(store, projectId, requiredChanges);
+  await saveProjectStore(result.store);
+  return { project: result.project, integration: result.integration, runtimeSummary: result.runtimeSummary };
+}
+
+async function requestProjectApprovalState(projectId, approval) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.requestProjectApproval(store, projectId, approval);
+  await saveProjectStore(result.store);
+  return { project: result.project, approval: result.approval, approvals: result.approvals, runtimeSummary: result.runtimeSummary };
+}
+
+async function decideProjectApprovalState(projectId, approvalId, decision, note) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.decideProjectApproval(store, projectId, approvalId, decision, note);
+  await saveProjectStore(result.store);
+  return { project: result.project, approval: result.approval, approvals: result.approvals, runtimeSummary: result.runtimeSummary };
+}
+
+async function buildProjectReconciliationPromptState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.buildProjectReconciliationPrompt(store, projectId);
+  return { project: result.project, prompt: result.prompt };
+}
+
+async function submitProjectReconciliationState(projectId, output) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.submitProjectReconciliation(store, projectId, output);
+  await saveProjectStore(result.store);
+  return { project: result.project, reconciliation: result.reconciliation, runtimeSummary: result.runtimeSummary };
+}
+
+async function getProjectSelectorHealthState() {
+  const tabs = await chrome.tabs.query({ url: ["https://chatgpt.com/*", "https://chat.openai.com/*"] });
+  const results = [];
+  for (const tab of tabs) {
+    try {
+      const health = await chrome.tabs.sendMessage(tab.id, { type: "GET_SELECTOR_HEALTH" });
+      results.push({ tabId: tab.id, title: tab.title || "ChatGPT", url: tab.url, ...health });
+    } catch (error) {
+      results.push({ tabId: tab.id, title: tab.title || "ChatGPT", url: tab.url, ok: false, status: "unavailable", error: error?.message || String(error) });
+    }
+  }
+  return { checkedAt: new Date().toISOString(), tabs: results };
 }
 
 function findProjectDispatchByTab(store, tabId) {
@@ -629,8 +699,46 @@ async function handleProjectTaskResult(message, sender) {
   return result;
 }
 
+async function handleProjectSuccessorTaskResult(message, sender) {
+  let store = await loadProjectStore();
+  const bound = ProjectStore.bindProjectSuccessorConversation(store, message.projectId, message.dispatchId, message.conversation?.id);
+  store = bound.store;
+  const result = ProjectStore.submitProjectTaskResult(store, message.projectId, message.dispatchId, message.output);
+  await saveProjectStore(result.store);
+  await removeManagedTab(sender?.tab?.id || result.dispatch.workerTabId);
+  return {
+    project: result.project,
+    task: result.task,
+    dispatch: result.dispatch,
+    result: result.result,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
 async function failProjectDispatch(message, sender) {
   let store = await loadProjectStore();
+  if (message.kind === "context_limit") {
+    try {
+      const prepared = ProjectStore.createProjectDispatchSuccessor(store, message.projectId, message.dispatchId, message.error || message.kind);
+      store = prepared.store;
+      await removeManagedTab(sender?.tab?.id);
+      const tab = await chrome.tabs.create({
+        url: freshChatUrl(prepared.successor.freshRequestId, prepared.successor.originalDispatchId, prepared.successor.dispatchId),
+        active: false
+      });
+      const started = ProjectStore.markProjectDispatchStarted(store, message.projectId, prepared.successor.dispatchId, tab.id);
+      await saveProjectStore(started.store);
+      return { ok: true, successorDispatchId: prepared.successor.dispatchId, successorGeneration: prepared.successor.successorGeneration };
+    } catch (error) {
+      const current = store.dispatchesByProject?.[message.projectId]?.[message.dispatchId];
+      if (current && ["dispatched", "running", "prepared"].includes(current.status)) {
+        store = ProjectStore.markProjectDispatchTransportError(store, message.projectId, message.dispatchId, error?.message || String(error)).store;
+      }
+      await removeManagedTab(sender?.tab?.id);
+      await saveProjectStore(store);
+      return { ok: false, error: error?.message || String(error) };
+    }
+  }
   const failed = ProjectStore.markProjectDispatchTransportError(store, message.projectId, message.dispatchId, message.error || message.kind || "Project worker failed");
   store = failed.store;
   if (["rate_limit", "account_restriction", "safety_restriction"].includes(message.kind) && store.projects[message.projectId]?.status === "running") {
@@ -1425,12 +1533,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return approveProjectIntegrationState(message.projectId);
       case "DISCARD_PROJECT_INTEGRATION":
         return discardProjectIntegrationState(message.projectId);
+      case "REQUEST_PROJECT_INTEGRATION_RETRY":
+        return requestProjectIntegrationRetryState(message.projectId, message.requiredChanges);
+      case "REQUEST_PROJECT_APPROVAL":
+        return requestProjectApprovalState(message.projectId, message.approval);
+      case "DECIDE_PROJECT_APPROVAL":
+        return decideProjectApprovalState(message.projectId, message.approvalId, message.decision, message.note);
+      case "BUILD_PROJECT_RECONCILIATION_PROMPT":
+        return buildProjectReconciliationPromptState(message.projectId);
+      case "SUBMIT_PROJECT_RECONCILIATION":
+        return submitProjectReconciliationState(message.projectId, message.output);
+      case "GET_PROJECT_SELECTOR_HEALTH":
+        return getProjectSelectorHealthState();
       case "DISPATCH_PROJECT_ASSIGNMENTS":
         return dispatchPreparedProjectAssignmentsState(message.projectId, message.dispatchIds, message.modelVerified);
       case "PROJECT_TASK_STATUS":
         return handleProjectTaskStatus(message);
       case "PROJECT_TASK_RESULT":
         return handleProjectTaskResult(message, sender);
+      case "PROJECT_SUCCESSOR_TASK_RESULT":
+        return handleProjectSuccessorTaskResult(message, sender);
       case "PROJECT_TASK_INTERRUPTED":
       case "PROJECT_TASK_ERROR":
         return failProjectDispatch(message, sender);
@@ -1440,7 +1562,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (projectWorker) {
           const project = projectStore.projects[projectWorker.projectId];
           const conversationId = message.conversation?.id;
-          if (conversationId !== projectWorker.dispatch.workerChatId) {
+          const isSuccessor = Number(projectWorker.dispatch.successorGeneration || 0) > 0;
+          if (!isSuccessor && conversationId !== (projectWorker.dispatch.conversationId || projectWorker.dispatch.workerChatId)) {
             await failProjectDispatch({
               projectId: projectWorker.projectId,
               dispatchId: projectWorker.dispatch.dispatchId,
@@ -1451,16 +1574,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const stored = await chrome.storage.local.get(SETTINGS_KEY);
           const settings = normalizeSettings({ ...(stored[SETTINGS_KEY] || {}), continuityEnabled: false, delaySeconds: 5 });
           await chrome.tabs.sendMessage(sender.tab.id, {
-            type: "RUN_PROJECT_TASK",
+            type: isSuccessor ? "RUN_PROJECT_SUCCESSOR_TASK" : "RUN_PROJECT_TASK",
             jobId: projectWorker.dispatch.dispatchId,
             projectId: projectWorker.projectId,
             dispatchId: projectWorker.dispatch.dispatchId,
             workerChatId: projectWorker.dispatch.workerChatId,
+            parentConversationId: projectWorker.dispatch.workerChatId,
+            freshRequestId: projectWorker.dispatch.freshRequestId,
             prompt: projectWorker.dispatch.prompt,
             settings,
             project: { title: project.title, repository: project.repository }
           });
-          return { ok: true, projectDispatchId: projectWorker.dispatch.dispatchId };
+          return { ok: true, projectDispatchId: projectWorker.dispatch.dispatchId, successor: isSuccessor };
         }
         const state = await loadState();
         const index = findChatIndexByTab(state, sender.tab?.id);

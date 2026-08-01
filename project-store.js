@@ -11,12 +11,16 @@
     || (typeof require === "function" ? require("./reviewer-protocol.js") : null);
   const integrationProtocol = root.AutoPrompterIntegrationProtocol
     || (typeof require === "function" ? require("./integration-protocol.js") : null);
-  const api = factory(plannerProtocol, workerProtocol, resultProtocol, reviewerProtocol, integrationProtocol);
+  const approvalProtocol = root.AutoPrompterApprovalProtocol
+    || (typeof require === "function" ? require("./approval-protocol.js") : null);
+  const reconciliationProtocol = root.AutoPrompterReconciliationProtocol
+    || (typeof require === "function" ? require("./reconciliation-protocol.js") : null);
+  const api = factory(plannerProtocol, workerProtocol, resultProtocol, reviewerProtocol, integrationProtocol, approvalProtocol, reconciliationProtocol);
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.AutoPrompterProjectStore = api;
-})(typeof globalThis !== "undefined" ? globalThis : self, (PlannerProtocol, WorkerProtocol, ResultProtocol, ReviewerProtocol, IntegrationProtocol) => {
+})(typeof globalThis !== "undefined" ? globalThis : self, (PlannerProtocol, WorkerProtocol, ResultProtocol, ReviewerProtocol, IntegrationProtocol, ApprovalProtocol, ReconciliationProtocol) => {
   const PROJECTS_KEY = "autoprompterProjects";
-  const STORE_SCHEMA_VERSION = "1.4";
+  const STORE_SCHEMA_VERSION = "1.6";
   const PROJECT_SCHEMA_VERSION = "1.0";
   const MAX_PROJECT_EVENTS = 200;
   const ACTIVE_STATUSES = new Set(["draft", "planning", "ready", "running"]);
@@ -108,6 +112,8 @@
       resultsByProject: {},
       reviewsByProject: {},
       integrationsByProject: {},
+      approvalsByProject: {},
+      reconciliationsByProject: {},
       events: []
     };
   }
@@ -158,6 +164,8 @@
           : APPROVAL_ACTIONS).filter(action => APPROVAL_ACTIONS.includes(action)))]
       },
       modelPolicy: clone(project.modelPolicy && typeof project.modelPolicy === "object" ? project.modelPolicy : defaultModelPolicy()),
+      repositoryReconciliationRequired: Boolean(project.repositoryReconciliationRequired),
+      lastReconciledAt: project.lastReconciledAt ? String(project.lastReconciledAt) : null,
       createdAt,
       updatedAt
     };
@@ -165,7 +173,7 @@
 
   function migrateStore(raw) {
     if (!raw) return { store: emptyStore(), migrated: true };
-    if ([STORE_SCHEMA_VERSION, "1.3", "1.2", "1.1", "1.0"].includes(raw.schemaVersion) && raw.projects && !Array.isArray(raw.projects)) {
+    if ([STORE_SCHEMA_VERSION, "1.5", "1.4", "1.3", "1.2", "1.1", "1.0"].includes(raw.schemaVersion) && raw.projects && !Array.isArray(raw.projects)) {
       const store = emptyStore();
       for (const [id, project] of Object.entries(raw.projects)) {
         const normalized = normalizeStoredProject(project);
@@ -175,7 +183,7 @@
       store.resumeStatusByProject = raw.resumeStatusByProject && typeof raw.resumeStatusByProject === "object"
         ? Object.fromEntries(Object.entries(raw.resumeStatusByProject).filter(([id, status]) => store.projects[id] && ACTIVE_STATUSES.has(status)))
         : {};
-      if ([STORE_SCHEMA_VERSION, "1.3", "1.2", "1.1"].includes(raw.schemaVersion) && PlannerProtocol) {
+      if ([STORE_SCHEMA_VERSION, "1.5", "1.4", "1.3", "1.2", "1.1"].includes(raw.schemaVersion) && PlannerProtocol) {
         for (const [projectId, plan] of Object.entries(raw.pendingPlansByProject || {})) {
           const project = store.projects[projectId];
           if (!project) continue;
@@ -189,14 +197,14 @@
         for (const [projectId, tasks] of Object.entries(raw.tasksByProject || {})) {
           if (store.projects[projectId] && tasks && typeof tasks === "object" && !Array.isArray(tasks)) store.tasksByProject[projectId] = clone(tasks);
         }
-        if ([STORE_SCHEMA_VERSION, "1.3", "1.2"].includes(raw.schemaVersion)) {
+        if ([STORE_SCHEMA_VERSION, "1.5", "1.4", "1.3", "1.2"].includes(raw.schemaVersion)) {
           for (const [projectId, dispatches] of Object.entries(raw.dispatchesByProject || {})) {
             if (store.projects[projectId] && dispatches && typeof dispatches === "object" && !Array.isArray(dispatches)) {
               store.dispatchesByProject[projectId] = clone(dispatches);
             }
           }
         }
-        if ([STORE_SCHEMA_VERSION, "1.3"].includes(raw.schemaVersion)) {
+        if ([STORE_SCHEMA_VERSION, "1.5", "1.4", "1.3"].includes(raw.schemaVersion)) {
           for (const [projectId, results] of Object.entries(raw.resultsByProject || {})) {
             if (store.projects[projectId] && results && typeof results === "object" && !Array.isArray(results)) store.resultsByProject[projectId] = clone(results);
           }
@@ -205,6 +213,14 @@
           }
           for (const [projectId, integration] of Object.entries(raw.integrationsByProject || {})) {
             if (store.projects[projectId] && integration && typeof integration === "object" && !Array.isArray(integration)) store.integrationsByProject[projectId] = clone(integration);
+          }
+          if ([STORE_SCHEMA_VERSION, "1.5"].includes(raw.schemaVersion)) {
+            for (const [projectId, approvals] of Object.entries(raw.approvalsByProject || {})) {
+              if (store.projects[projectId] && approvals && typeof approvals === "object" && !Array.isArray(approvals)) store.approvalsByProject[projectId] = clone(approvals);
+            }
+            for (const [projectId, reconciliation] of Object.entries(raw.reconciliationsByProject || {})) {
+              if (store.projects[projectId] && reconciliation && typeof reconciliation === "object" && !Array.isArray(reconciliation)) store.reconciliationsByProject[projectId] = clone(reconciliation);
+            }
           }
         }
       }
@@ -313,6 +329,15 @@
     if (!IntegrationProtocol) throw new Error("Integration protocol is unavailable.");
     return IntegrationProtocol;
   }
+  function requireApprovalProtocol() {
+    if (!ApprovalProtocol) throw new Error("Approval protocol is unavailable.");
+    return ApprovalProtocol;
+  }
+
+  function requireReconciliationProtocol() {
+    if (!ReconciliationProtocol) throw new Error("Reconciliation protocol is unavailable.");
+    return ReconciliationProtocol;
+  }
 
   function taskDependenciesAccepted(tasks, task) {
     return task.dependencies.every(dependencyId => tasks[dependencyId]?.status === "accepted");
@@ -361,7 +386,11 @@
       revisionTaskCount: taskValues.filter(task => Array.isArray(task.requiredChanges) && task.requiredChanges.length).length,
       integrationReady: taskValues.length > 0 && taskValues.every(task => task.status === "accepted"),
       pendingIntegration: Boolean(integration?.pending),
-      approvedIntegration: Boolean(integration?.approved)
+      approvedIntegration: Boolean(integration?.approved),
+      integrationAttempt: Number(integration?.activeAttempt || integration?.pending?.integrationAttempt || 0),
+      pendingApprovalCount: Object.values(store.approvalsByProject[projectId] || {}).filter(item => item.status === "pending").length,
+      reconciliationRequired: Boolean(project?.repositoryReconciliationRequired),
+      reconciliationConflictCount: Number(store.reconciliationsByProject[projectId]?.latest?.conflictCount || 0)
     };
   }
 
@@ -509,7 +538,12 @@
         prompt: "",
         createdAt: at,
         updatedAt: at,
-        expiredAt: null
+        expiredAt: null,
+        parentDispatchId: null,
+        originalDispatchId: dispatchId,
+        successorGeneration: 0,
+        conversationId: workerChatId,
+        freshRequestId: null
       };
       dispatch.prompt = workerProtocol.buildWorkerPrompt(project, task, dispatch);
       dispatches[dispatchId] = dispatch;
@@ -704,6 +738,23 @@
     };
   }
 
+  function integrationRecord(store, projectId) {
+    const existing = store.integrationsByProject[projectId];
+    if (existing?.attempts) return existing;
+    const legacyPending = existing?.pending || null;
+    return {
+      activeAttempt: legacyPending?.integrationAttempt || 0,
+      activeIntegrationId: legacyPending?.integrationId || null,
+      pending: legacyPending,
+      approved: existing?.approved || null,
+      attempts: legacyPending ? [legacyPending] : [],
+      requiredChanges: [],
+      retryRequestedAt: null,
+      submittedAt: existing?.submittedAt || null,
+      approvedAt: existing?.approvedAt || null
+    };
+  }
+
   function buildProjectIntegratorPrompt(storeInput, projectId) {
     const store = clone(storeInput);
     const { id, project } = selectedProject(store, projectId);
@@ -712,17 +763,30 @@
     if (!plan || !Object.keys(tasks).length || !Object.values(tasks).every(task => task.status === "accepted")) {
       throw new Error("Every approved task must be accepted before integration.");
     }
-    return {
-      store,
-      project: clone(project),
-      prompt: requireIntegrationProtocol().buildIntegratorPrompt(
-        project,
-        plan,
-        tasks,
-        store.resultsByProject[id] || {},
-        store.reviewsByProject[id] || {}
-      )
-    };
+    const record = integrationRecord(store, id);
+    if (record.pending?.status === "completed") throw new Error("Completed integration evidence is already awaiting explicit approval.");
+    const maxAttempts = 1 + Number(project.scheduler.revisionLimit || 0);
+    const attempt = Number(record.activeAttempt || 0) + 1;
+    if (attempt > maxAttempts) throw new Error("Integration retry limit is exhausted.");
+    const protocol = requireIntegrationProtocol();
+    const integrationId = protocol.buildIntegrationId(id, plan.revision, attempt);
+    const built = protocol.buildIntegratorPrompt(
+      project,
+      plan,
+      tasks,
+      store.resultsByProject[id] || {},
+      store.reviewsByProject[id] || {},
+      {
+        attempt,
+        integrationId,
+        previous: record.attempts.at(-1) || null,
+        requiredChanges: record.requiredChanges || []
+      }
+    );
+    record.activeAttempt = attempt;
+    record.activeIntegrationId = integrationId;
+    store.integrationsByProject[id] = record;
+    return { store, project: clone(project), prompt: built.prompt, integrationId, integrationAttempt: attempt, integration: clone(record) };
   }
 
   function submitProjectIntegrationOutput(storeInput, projectId, output, clock = Date.now) {
@@ -734,24 +798,58 @@
     if (!plan || !Object.keys(tasks).length || !Object.values(tasks).every(task => task.status === "accepted")) {
       throw new Error("Every approved task must be accepted before integration.");
     }
-    const result = requireIntegrationProtocol().parseAndValidateIntegration(output, { project, plan, tasks });
+    const record = integrationRecord(store, id);
+    if (!record.activeIntegrationId || !record.activeAttempt) throw new Error("Generate the active integrator prompt before submitting evidence.");
+    const result = requireIntegrationProtocol().parseAndValidateIntegration(output, {
+      project,
+      plan,
+      tasks,
+      expectedIntegrationId: record.activeIntegrationId,
+      expectedAttempt: record.activeAttempt
+    });
     const at = nowIso(clock);
-    store.integrationsByProject[id] = { pending: result, approved: null, submittedAt: at };
+    record.pending = result;
+    record.submittedAt = at;
+    record.attempts = [...(record.attempts || []).filter(item => item.integrationId !== result.integrationId), result].slice(-20);
+    record.requiredChanges = result.status === "blocked" ? clone(result.conflicts) : [];
+    store.integrationsByProject[id] = record;
     project.updatedAt = at;
-    appendEvent(store, "integration_validated", id, at, `${result.status} integration evidence stored; explicit approval required`);
-    return { store, project: clone(project), integration: clone(store.integrationsByProject[id]), runtimeSummary: summarizeProjectRuntime(store, id) };
+    appendEvent(store, "integration_validated", id, at, `${result.integrationId} stored as ${result.status}; explicit approval or retry is required`);
+    return { store, project: clone(project), integration: clone(record), runtimeSummary: summarizeProjectRuntime(store, id) };
+  }
+
+  function requestProjectIntegrationRetry(storeInput, projectId, requiredChanges = [], clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const record = integrationRecord(store, id);
+    if (!record.pending || record.pending.status === "completed") throw new Error("Only blocked or failed integration evidence can be retried.");
+    const maxAttempts = 1 + Number(project.scheduler.revisionLimit || 0);
+    if (Number(record.activeAttempt || 0) >= maxAttempts) throw new Error("Integration retry limit is exhausted.");
+    const changes = [...new Set([...(record.pending.conflicts || []), ...(Array.isArray(requiredChanges) ? requiredChanges : [])]
+      .map(item => String(item || "").trim()).filter(Boolean))].slice(0, 50);
+    if (!changes.length) throw new Error("At least one concrete integration retry change is required.");
+    const at = nowIso(clock);
+    record.requiredChanges = changes;
+    record.retryRequestedAt = at;
+    record.pending = null;
+    record.activeIntegrationId = null;
+    store.integrationsByProject[id] = record;
+    project.updatedAt = at;
+    appendEvent(store, "integration_retry_requested", id, at, changes.join("; "));
+    return { store, project: clone(project), integration: clone(record), runtimeSummary: summarizeProjectRuntime(store, id) };
   }
 
   function approveProjectIntegration(storeInput, projectId, clock = Date.now) {
     const store = clone(storeInput);
     const { id, project } = selectedProject(store, projectId);
-    const record = store.integrationsByProject[id];
-    if (!record?.pending) throw new Error("No validated integration result is awaiting approval.");
+    const record = integrationRecord(store, id);
+    if (!record.pending) throw new Error("No validated integration result is awaiting approval.");
     if (record.pending.status !== "completed") throw new Error("Only completed integration evidence can finish a project.");
     const at = nowIso(clock);
     record.approved = record.pending;
     record.pending = null;
     record.approvedAt = at;
+    store.integrationsByProject[id] = record;
     project.status = "completed";
     project.updatedAt = at;
     appendEvent(store, "integration_approved", id, at, `Project completed at ${record.approved.commit}`);
@@ -761,13 +859,188 @@
   function discardProjectIntegration(storeInput, projectId, clock = Date.now) {
     const store = clone(storeInput);
     const { id, project } = selectedProject(store, projectId);
-    const record = store.integrationsByProject[id];
-    if (!record?.pending) throw new Error("No pending integration result is available to discard.");
+    const record = integrationRecord(store, id);
+    if (!record.pending) throw new Error("No pending integration result is available to discard.");
     record.pending = null;
+    record.activeIntegrationId = null;
     record.discardedAt = nowIso(clock);
+    store.integrationsByProject[id] = record;
     project.updatedAt = record.discardedAt;
     appendEvent(store, "integration_discarded", id, record.discardedAt, "Pending integration evidence discarded before approval");
     return { store, project: clone(project), integration: clone(record), runtimeSummary: summarizeProjectRuntime(store, id) };
+  }
+
+  function requestProjectApproval(storeInput, projectId, input, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const action = String(input?.action || "");
+    if (!project.scheduler.approvalActions.includes(action)) throw new Error("This project does not allow that approval action.");
+    const at = nowIso(clock);
+    const expiresAt = input?.expiresAt || new Date(clock() + 24 * 60 * 60 * 1000).toISOString();
+    const request = requireApprovalProtocol().createApprovalRequest({
+      projectId: id,
+      action,
+      target: input?.target,
+      justification: input?.justification,
+      requestedAt: at,
+      expiresAt
+    });
+    const approvals = store.approvalsByProject[id] || {};
+    if (approvals[request.approvalId]) throw new Error("An identical approval request already exists.");
+    approvals[request.approvalId] = request;
+    store.approvalsByProject[id] = approvals;
+    project.updatedAt = at;
+    appendEvent(store, "approval_requested", id, at, `${request.action}: ${request.target}`);
+    return { store, project: clone(project), approval: clone(request), approvals: clone(approvals), runtimeSummary: summarizeProjectRuntime(store, id) };
+  }
+
+  function decideProjectApproval(storeInput, projectId, approvalId, decision, note, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const approvals = store.approvalsByProject[id] || {};
+    const request = approvals[approvalId];
+    if (!request) throw new Error("Approval request not found.");
+    const decided = requireApprovalProtocol().decideApproval(project, request, decision, note, nowIso(clock), clock());
+    approvals[approvalId] = decided;
+    store.approvalsByProject[id] = approvals;
+    project.updatedAt = decided.decidedAt;
+    appendEvent(store, `approval_${decision}`, id, decided.decidedAt, `${decided.action}: ${decided.target}`);
+    return { store, project: clone(project), approval: clone(decided), approvals: clone(approvals), runtimeSummary: summarizeProjectRuntime(store, id) };
+  }
+
+  function expireProjectApprovals(storeInput, projectId, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const approvals = store.approvalsByProject[id] || {};
+    const at = nowIso(clock);
+    const expired = [];
+    for (const request of Object.values(approvals)) {
+      if (request.status === "pending" && requireApprovalProtocol().isExpired(request, clock())) {
+        request.status = "expired";
+        request.decidedAt = at;
+        expired.push(request.approvalId);
+      }
+    }
+    if (expired.length) {
+      project.updatedAt = at;
+      appendEvent(store, "approvals_expired", id, at, expired.join(", "));
+    }
+    store.approvalsByProject[id] = approvals;
+    return { store, project: clone(project), approvals: clone(approvals), expired, runtimeSummary: summarizeProjectRuntime(store, id) };
+  }
+
+  function buildProjectReconciliationPrompt(storeInput, projectId) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const plan = store.approvedPlansByProject[id];
+    if (!plan) throw new Error("An approved plan is required for repository reconciliation.");
+    return {
+      store,
+      project: clone(project),
+      prompt: requireReconciliationProtocol().buildReconciliationPrompt(project, plan, store.tasksByProject[id] || {}, store.integrationsByProject[id] || null)
+    };
+  }
+
+  function submitProjectReconciliation(storeInput, projectId, output, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const plan = store.approvedPlansByProject[id];
+    if (!plan) throw new Error("An approved plan is required for repository reconciliation.");
+    const protocol = requireReconciliationProtocol();
+    const snapshot = protocol.validateReconciliation(protocol.parseReconciliationEnvelope(output), {
+      project,
+      plan,
+      tasks: store.tasksByProject[id] || {}
+    });
+    const previous = store.reconciliationsByProject[id]?.history || [];
+    const record = { latest: snapshot, history: [...previous, snapshot].slice(-20) };
+    store.reconciliationsByProject[id] = record;
+    project.lastReconciledAt = snapshot.observedAt;
+    project.repositoryReconciliationRequired = snapshot.conflictCount > 0 || snapshot.missingCount > 0;
+    project.updatedAt = nowIso(clock);
+    appendEvent(store, "repository_reconciled", id, project.updatedAt, `${snapshot.conflictCount} conflicts, ${snapshot.missingCount} missing artifacts`);
+    return { store, project: clone(project), reconciliation: clone(record), runtimeSummary: summarizeProjectRuntime(store, id) };
+  }
+
+  function markRepositoryReconciliationRequired(storeInput, projectId, reason, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const at = nowIso(clock);
+    project.repositoryReconciliationRequired = true;
+    project.updatedAt = at;
+    appendEvent(store, "repository_reconciliation_required", id, at, String(reason || "Extension restart or uncertain repository state").slice(0, 500));
+    return { store, project: clone(project), runtimeSummary: summarizeProjectRuntime(store, id) };
+  }
+
+  function createProjectDispatchSuccessor(storeInput, projectId, dispatchId, reason, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const dispatches = store.dispatchesByProject[id] || {};
+    const tasks = store.tasksByProject[id] || {};
+    const parent = dispatches[dispatchId];
+    const task = parent && tasks[parent.taskId];
+    if (!parent || !task) throw new Error("Project dispatch not found.");
+    if (!["dispatched", "running"].includes(parent.status)) throw new Error("Only an active web dispatch can create a context successor.");
+    const generation = Number(parent.successorGeneration || 0) + 1;
+    if (generation > 2) throw new Error("Project worker context successor limit is exhausted.");
+    const protocol = requireWorkerProtocol();
+    const successorId = protocol.buildSuccessorDispatchId(parent, generation);
+    if (dispatches[successorId]) throw new Error("Project successor dispatch already exists.");
+    const at = nowIso(clock);
+    const expiresAt = new Date(clock() + project.scheduler.leaseMinutes * 60_000).toISOString();
+    const successor = {
+      ...clone(parent),
+      schemaVersion: protocol.DISPATCH_SCHEMA_VERSION,
+      dispatchId: successorId,
+      status: "prepared",
+      assignedAt: at,
+      expiresAt,
+      prompt: "",
+      createdAt: at,
+      updatedAt: at,
+      expiredAt: null,
+      workerTabId: null,
+      lastStatus: "Preparing a fresh context-limit successor",
+      lastError: null,
+      resultDigest: null,
+      reviewDecision: null,
+      dispatchedAt: null,
+      resultReceivedAt: null,
+      reviewedAt: null,
+      parentDispatchId: parent.dispatchId,
+      originalDispatchId: parent.originalDispatchId || parent.dispatchId,
+      successorGeneration: generation,
+      conversationId: null,
+      freshRequestId: `project-successor:${successorId}:${clock()}`
+    };
+    successor.prompt = protocol.buildWorkerSuccessorPrompt(project, task, parent, successor, reason);
+    parent.status = "superseded";
+    parent.workerTabId = null;
+    parent.updatedAt = at;
+    dispatches[successorId] = successor;
+    task.status = "leased";
+    task.lease = { dispatchId: successorId, workerChatId: successor.workerChatId, assignedAt: at, expiresAt, attempt: successor.attempt };
+    task.branch = successor.branch;
+    task.updatedAt = at;
+    store.dispatchesByProject[id] = dispatches;
+    store.tasksByProject[id] = tasks;
+    project.updatedAt = at;
+    appendEvent(store, "worker_context_successor_prepared", id, at, `${parent.dispatchId} -> ${successorId}`);
+    return { store, project: clone(project), task: clone(task), parent: clone(parent), successor: clone(successor), runtimeSummary: summarizeProjectRuntime(store, id) };
+  }
+
+  function bindProjectSuccessorConversation(storeInput, projectId, dispatchId, conversationId, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const dispatch = store.dispatchesByProject[id]?.[dispatchId];
+    if (!dispatch || !dispatch.successorGeneration) throw new Error("Project successor dispatch not found.");
+    const normalized = String(conversationId || "").trim();
+    if (!normalized || normalized === dispatch.workerChatId) throw new Error("Project successor conversation identity is invalid.");
+    dispatch.conversationId = normalized;
+    dispatch.updatedAt = nowIso(clock);
+    project.updatedAt = dispatch.updatedAt;
+    appendEvent(store, "worker_context_successor_bound", id, dispatch.updatedAt, `${dispatchId} -> ${normalized}`);
+    return { store, project: clone(project), dispatch: clone(dispatch), runtimeSummary: summarizeProjectRuntime(store, id) };
   }
 
   function markProjectDispatchStarted(storeInput, projectId, dispatchId, tabId, clock = Date.now) {
@@ -797,13 +1070,22 @@
     const store = clone(storeInput);
     const { id, project } = selectedProject(store, projectId);
     const dispatch = store.dispatchesByProject[id]?.[dispatchId];
+    const task = dispatch && store.tasksByProject[id]?.[dispatch.taskId];
     if (!dispatch) throw new Error("Project dispatch not found.");
     const at = nowIso(clock);
     if (dispatch.status === "dispatched") dispatch.status = "running";
     dispatch.lastStatus = String(status || "Working").slice(0, 500);
     dispatch.updatedAt = at;
+    if (["dispatched", "running"].includes(dispatch.status)) {
+      const expiresAt = new Date(clock() + project.scheduler.leaseMinutes * 60_000).toISOString();
+      dispatch.expiresAt = expiresAt;
+      if (task?.lease?.dispatchId === dispatchId) {
+        task.lease.expiresAt = expiresAt;
+        task.updatedAt = at;
+      }
+    }
     project.updatedAt = at;
-    return { store, project: clone(project), dispatch: clone(dispatch), runtimeSummary: summarizeProjectRuntime(store, id) };
+    return { store, project: clone(project), task: clone(task || null), dispatch: clone(dispatch), runtimeSummary: summarizeProjectRuntime(store, id) };
   }
 
   function markProjectDispatchTransportError(storeInput, projectId, dispatchId, error, clock = Date.now) {
@@ -922,6 +1204,8 @@
       results: clone(store.resultsByProject[id] || {}),
       reviews: clone(store.reviewsByProject[id] || {}),
       integration: clone(store.integrationsByProject[id] || null),
+      approvals: clone(store.approvalsByProject[id] || {}),
+      reconciliation: clone(store.reconciliationsByProject[id] || null),
       runtimeSummary: summarizeProjectRuntime(store, id)
     };
   }
@@ -1011,6 +1295,15 @@
     submitProjectIntegrationOutput,
     approveProjectIntegration,
     discardProjectIntegration,
+    requestProjectIntegrationRetry,
+    requestProjectApproval,
+    decideProjectApproval,
+    expireProjectApprovals,
+    buildProjectReconciliationPrompt,
+    submitProjectReconciliation,
+    markRepositoryReconciliationRequired,
+    createProjectDispatchSuccessor,
+    bindProjectSuccessorConversation,
     markProjectDispatchStarted,
     updateProjectDispatchStatus,
     markProjectDispatchTransportError

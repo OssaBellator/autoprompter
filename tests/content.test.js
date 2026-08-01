@@ -26,6 +26,9 @@ const {
   shouldHandleInterruption,
   accessibleNodeText,
   liveNoticeTexts,
+  generationControlState,
+  extractActivityElapsedValues,
+  assistantCompletionReady,
   buildDurableWorkPrompt,
   buildInitializationPrompt,
   extractCheckpointMarker,
@@ -258,4 +261,48 @@ test("prompt submission includes form and keyboard fallbacks", () => {
 
   const source = require("node:fs").readFileSync(require.resolve("../content.js"), "utf8");
   assert.match(source, /timeoutMs: 3000/);
+});
+
+
+test("composer control reconciliation prefers the idle Voice mode icon over stale Stop nodes", () => {
+  const voice = { isConnected: true };
+  const stop = { isConnected: true };
+  const root = { querySelectorAll: selector => {
+    if (selector.includes("voice-mode")) return [voice];
+    if (selector.includes("stop-button")) return [stop];
+    return [];
+  } };
+  const composerNode = { isConnected: true, closest: () => root };
+  const originalQuery = document.querySelectorAll;
+  document.querySelectorAll = selector => selector === "#prompt-textarea" ? [composerNode] : [];
+  try {
+    assert.equal(generationControlState().state, "idle");
+    root.querySelectorAll = selector => selector.includes("stop-button") ? [stop] : [];
+    assert.equal(generationControlState().state, "generating");
+    root.querySelectorAll = () => [];
+    assert.equal(generationControlState().state, "unknown");
+  } finally {
+    document.querySelectorAll = originalQuery;
+  }
+});
+
+test("activity elapsed text provides progress heartbeats without reading animation styles", () => {
+  assert.deepEqual(extractActivityElapsedValues("Activity · 2m 37s"), ["2m 37s"]);
+  assert.deepEqual(extractActivityElapsedValues("1h 4m 09s"), ["1h 4m 09s"]);
+  assert.deepEqual(extractActivityElapsedValues("shadow pulse animation"), []);
+});
+
+test("idle stable assistant output completes even when a tool card says Thinking", () => {
+  const baseline = { count: 1, identity: "turn-1", signature: "old" };
+  const snapshot = { count: 2, identity: "turn-2", signature: "new", text: "Thinking…", textLength: 9 };
+  assert.equal(assistantCompletionReady({ snapshot, baseline, requireChange: true, lastChangedAt: 1000, now: 4000, controlState: "idle" }), true);
+  assert.equal(assistantCompletionReady({ snapshot, baseline, requireChange: true, lastChangedAt: 1000, now: 4000, controlState: "generating" }), false);
+});
+
+test("response waiting uses renewable heartbeats and a bounded hard cap", () => {
+  const source = require("node:fs").readFileSync(require.resolve("../content.js"), "utf8");
+  assert.match(source, /ACTIVE_GENERATION_HEARTBEAT_MS/);
+  assert.match(source, /STATUS_HEARTBEAT_MS/);
+  assert.match(source, /12 \* 60 \* 60 \* 1000/);
+  assert.match(source, /activityProgressSnapshot/);
 });

@@ -139,15 +139,17 @@ test("integrator protocol requires every accepted task and passing project-wide 
   const results = { [dispatch.dispatchId]: result };
   const reviews = { [dispatch.dispatchId]: review };
   const plan = { revision: 1 };
-  const prompt = IntegrationProtocol.buildIntegratorPrompt(project, plan, tasks, results, reviews);
-  assert.match(prompt, /Do not merge to the default branch/);
+  const built = IntegrationProtocol.buildIntegratorPrompt(project, plan, tasks, results, reviews);
+  assert.match(built.prompt, /Do not merge to the default branch/);
   const output = {
-    schemaVersion: "1.0",
+    schemaVersion: "1.1",
+    integrationId: built.integrationId,
+    integrationAttempt: built.attempt,
     projectId: project.projectId,
     planRevision: 1,
     status: "completed",
     summary: "Integrated accepted work.",
-    branch: "agent/autoprompter-v3/integration-r1",
+    branch: "agent/autoprompter-v3/integration-r1-a1",
     commit: "1234567890abcdef",
     includedTasks: [task.id],
     tests: [{ command: "npm test", status: "passed", summary: "All tests passed." }],
@@ -157,8 +159,11 @@ test("integrator protocol requires every accepted task and passing project-wide 
   };
   const integration = IntegrationProtocol.parseAndValidateIntegration(
     envelope(IntegrationProtocol.INTEGRATION_BEGIN, output, IntegrationProtocol.INTEGRATION_END),
-    { project, plan, tasks }
+    { project, plan, tasks, expectedIntegrationId: built.integrationId, expectedAttempt: built.attempt }
   );
   assert.equal(integration.status, "completed");
-  assert.throws(() => IntegrationProtocol.validateIntegration({ ...output, tests: [] }, { project, plan, tasks }), /passing project-wide test evidence/);
+  assert.throws(() => IntegrationProtocol.validateIntegration(
+    { ...output, tests: [] },
+    { project, plan, tasks, expectedIntegrationId: built.integrationId, expectedAttempt: built.attempt }
+  ), /passing project-wide test evidence/);
 });

@@ -205,9 +205,71 @@
               </label>
               <div class="inline-actions">
                 <button id="submitProjectIntegration" class="compact" type="button">Validate integration</button>
+                <button id="requestProjectIntegrationRetry" class="compact" type="button">Request retry</button>
                 <button id="approveProjectIntegration" class="compact" type="button">Approve completion</button>
                 <button id="discardProjectIntegration" class="compact" type="button">Discard integration</button>
               </div>
+              <label>
+                Integration retry requirements
+                <textarea id="projectIntegrationRetryChanges" rows="3" placeholder="One required change per line; blocked conflicts are included automatically"></textarea>
+              </label>
+            </section>
+
+            <section class="approval-workbench">
+              <strong>External-action approval queue</strong>
+              <p class="hint">Approval records user intent only. AutoPrompter does not execute merges, releases, workflow changes, permission changes, deletions, or external side effects.</p>
+              <div class="grid">
+                <label>
+                  Action
+                  <select id="projectApprovalAction">
+                    <option value="merge_to_default_branch">Merge to default branch</option>
+                    <option value="delete_branch">Delete branch</option>
+                    <option value="publish_release">Publish release</option>
+                    <option value="modify_workflow">Modify workflow</option>
+                    <option value="change_permissions">Change permissions</option>
+                    <option value="external_side_effect">Other external side effect</option>
+                  </select>
+                </label>
+                <label>
+                  Target
+                  <input id="projectApprovalTarget" type="text" maxlength="500" placeholder="branch, release, workflow, permission, or external target">
+                </label>
+              </div>
+              <label>
+                Justification
+                <textarea id="projectApprovalJustification" rows="3" maxlength="4000" placeholder="Why this exact action and target are needed"></textarea>
+              </label>
+              <button id="requestProjectApproval" class="compact" type="button">Add pending approval</button>
+              <label>
+                Approval request
+                <select id="projectApprovalSelect"><option value="">No approval requests</option></select>
+              </label>
+              <label>
+                Decision note
+                <textarea id="projectApprovalDecisionNote" rows="2" maxlength="4000"></textarea>
+              </label>
+              <div class="inline-actions">
+                <button id="approveProjectAction" class="compact" type="button">Approve request</button>
+                <button id="rejectProjectAction" class="compact" type="button">Reject request</button>
+              </div>
+              <textarea id="projectApprovalInstruction" rows="6" readonly placeholder="An approved request produces a scoped instruction but performs no action"></textarea>
+            </section>
+
+            <section class="reconciliation-workbench">
+              <strong>Repository restart reconciliation</strong>
+              <p class="hint">Generate a read-only repository evidence prompt after a browser or extension restart. Reconciliation never accepts tasks or integrations by itself.</p>
+              <button id="buildProjectReconciliationPrompt" class="compact" type="button">Generate reconciliation prompt</button>
+              <textarea id="projectReconciliationPrompt" rows="7" readonly></textarea>
+              <textarea id="projectReconciliationInput" rows="7" maxlength="120000" placeholder="AUTOPROMPTER_RECONCILIATION_BEGIN&#10;{ ... }&#10;AUTOPROMPTER_RECONCILIATION_END"></textarea>
+              <button id="submitProjectReconciliation" class="compact" type="button">Validate repository snapshot</button>
+              <pre id="projectReconciliationSummary"></pre>
+            </section>
+
+            <section class="selector-health-workbench">
+              <strong>ChatGPT selector health</strong>
+              <p class="hint">Checks currently open ChatGPT tabs for the composer, send/stop controls, new-chat control, notices, and conversation identity. This is not an authenticated end-to-end validation.</p>
+              <button id="checkProjectSelectorHealth" class="compact" type="button">Check open ChatGPT tabs</button>
+              <pre id="projectSelectorHealthOutput"></pre>
             </section>
           </section>
         </div>

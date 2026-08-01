@@ -5,7 +5,9 @@
   const FALLBACK_STABLE_MS = 2500;
   const POLL_MS = 250;
   const READY_HEARTBEAT_MS = 15000;
-  const JOB_TIMEOUT_MS = 30 * 60 * 1000;
+  const JOB_TIMEOUT_MS = 12 * 60 * 60 * 1000;
+  const ACTIVE_GENERATION_HEARTBEAT_MS = 30 * 1000;
+  const STATUS_HEARTBEAT_MS = 15 * 1000;
   const COMPOSER_WAIT_MS = 10 * 60 * 1000;
   const OWNERSHIP_ATTR = "data-autoprompter-owner";
   const CHECKPOINT_PREFIX = "AUTOPROMPTER_CHECKPOINT:";
@@ -48,11 +50,19 @@
       'button[type="submit"]'
     ],
     stop: [
-      'form button[data-testid="stop-button"]',
-      'form button[aria-label*="Stop generating"]',
-      'form button[aria-label*="Stop response"]',
-      'form button[aria-label*="Stop streaming"]',
-      'button[data-testid*="stop"]'
+      'button[data-testid="stop-button"]',
+      'button[aria-label*="Stop generating"]',
+      'button[aria-label*="Stop response"]',
+      'button[aria-label*="Stop streaming"]',
+      'button[title*="Stop generating"]',
+      'button[title*="Stop response"]'
+    ],
+    voice: [
+      'button[data-testid*="voice-mode"]',
+      'button[aria-label*="Voice mode"]',
+      'button[aria-label*="voice mode"]',
+      'button[title*="Voice mode"]',
+      'button[title*="voice mode"]'
     ],
     newChat: [
       'a[data-testid*="new-chat"]',
@@ -334,8 +344,72 @@
     };
   }
 
+  function composerControlRoot() {
+    const target = composer();
+    return target?.closest?.("form") || document;
+  }
+
+  function visibleControlByLabel(root, pattern) {
+    let controls = [];
+    try { controls = root.querySelectorAll?.('button, [role="button"]') || []; } catch { controls = []; }
+    for (const control of controls) {
+      if (!isVisible(control)) continue;
+      const label = normalizeText([
+        control.getAttribute?.("aria-label"),
+        control.getAttribute?.("title"),
+        control.getAttribute?.("data-testid")
+      ].filter(Boolean).join(" "));
+      if (pattern.test(label)) return control;
+    }
+    return null;
+  }
+
+  function generationControlState() {
+    const root = composerControlRoot();
+    const voice = firstVisible(SELECTORS.voice, root)
+      || visibleControlByLabel(root, /(?:start\s+)?voice\s+mode/i);
+    const stop = firstVisible(SELECTORS.stop, root)
+      || visibleControlByLabel(root, /stop\s+(?:generating|response|streaming)/i);
+    if (voice) return { state: "idle", voice, stop };
+    if (stop) return { state: "generating", voice: null, stop };
+    return { state: "unknown", voice: null, stop: null };
+  }
+
   function isGenerating() {
-    return Boolean(firstVisible(SELECTORS.stop));
+    return generationControlState().state === "generating";
+  }
+
+  function isComposerIdle() {
+    return generationControlState().state === "idle";
+  }
+
+  function extractActivityElapsedValues(value) {
+    const text = normalizeText(value);
+    if (!text) return [];
+    const matches = text.match(/(?:^|\s)(?:\d+\s*h\s*)?(?:\d+\s*m\s*)?\d+\s*s(?:$|\s)/gi) || [];
+    return [...new Set(matches.map(item => normalizeText(item)).filter(Boolean))];
+  }
+
+  function activityProgressSnapshot() {
+    const values = [];
+    const selectors = [
+      'time', '[data-testid*="elapsed"]', '[aria-label*="elapsed"]',
+      '[aria-label*="Activity"] time', '[data-testid*="activity"] time',
+      'aside time', '[role="dialog"] time',
+      '[aria-label*="Activity"] span', '[data-testid*="activity"] span',
+      'aside span', '[role="dialog"] span'
+    ];
+    for (const selector of selectors) {
+      let nodes = [];
+      try { nodes = document.querySelectorAll(selector); } catch { nodes = []; }
+      for (const node of nodes) {
+        if (!isVisible(node)) continue;
+        const text = accessibleNodeText(node);
+        for (const value of extractActivityElapsedValues(text)) if (!values.includes(value)) values.push(value);
+      }
+    }
+    values.sort();
+    return { values, signature: values.join("|") };
   }
 
   function composer() {
@@ -363,6 +437,29 @@
       if (/^new chat$/i.test(label)) return node;
     }
     return null;
+  }
+
+  function selectorHealth() {
+    const controls = generationControlState();
+    const checks = {
+      composer: Boolean(composer()),
+      send: Boolean(enabledSendButton() || firstVisible(SELECTORS.send)),
+      stop: controls.state === "generating",
+      voice: controls.state === "idle",
+      newChat: Boolean(newChatControl()),
+      conversation: Boolean(conversationInfo()),
+      notices: Boolean(firstVisible(SELECTORS.notices))
+    };
+    const required = [checks.composer, checks.newChat];
+    const status = required.every(Boolean) ? "healthy" : required.some(Boolean) ? "degraded" : "failed";
+    return {
+      ok: status !== "failed",
+      status,
+      checkedAt: new Date().toISOString(),
+      conversation: conversationInfo(),
+      checks,
+      selectorCounts: Object.fromEntries(Object.entries(SELECTORS).map(([key, selectors]) => [key, selectors.length]))
+    };
   }
 
   function stopGeneratingBestEffort() {
@@ -519,9 +616,11 @@
     return parts;
   }
 
-  function detectInterruption(settings, baseline = null) {
+  function detectInterruption(settings, baseline = null, { allowStalled = true } = {}) {
     for (const text of liveNoticeTexts()) {
-      const notice = matureGuardrail(classifyGuardrailText(text, "notice"), settings);
+      const classified = classifyGuardrailText(text, "notice");
+      if (!allowStalled && classified?.kind === "stalled") continue;
+      const notice = matureGuardrail(classified, settings);
       if (shouldHandleInterruption(notice, settings)) return notice;
     }
 
@@ -567,6 +666,12 @@
     throw new Error("Timed out waiting for ChatGPT.");
   }
 
+  function assistantCompletionReady({ snapshot, baseline, requireChange, lastChangedAt, now = Date.now(), controlState }) {
+    const changed = !baseline || snapshotChanged(baseline, snapshot);
+    const stable = now - lastChangedAt >= FALLBACK_STABLE_MS;
+    return Boolean(snapshot.count > 0 && stable && changed && controlState !== "generating" && (!requireChange || changed));
+  }
+
   async function waitForCompletedAssistant({
     signal,
     settings,
@@ -575,45 +680,78 @@
     timeoutMs = JOB_TIMEOUT_MS,
     status
   }) {
+    const startedAt = Date.now();
+    const hardTimeoutMs = Math.max(timeoutMs, JOB_TIMEOUT_MS);
+    const inactivityMs = Math.max(60_000, Number(settings?.stallMinutes || 15) * 60 * 1000);
     let last = assistantSnapshot();
     let lastChangedAt = Date.now();
-    const stallAwareTimeoutMs = Math.max(
-      timeoutMs,
-      Math.ceil(Number(settings?.stallMinutes || 0) * 60 * 1000) + 60_000
-    );
-    return waitUntil(() => {
+    let lastProgressAt = Date.now();
+    let lastActiveHeartbeatAt = 0;
+    let lastStatusAt = 0;
+    let lastControlState = generationControlState().state;
+    let lastActivity = activityProgressSnapshot();
+
+    while (Date.now() - startedAt < hardTimeoutMs) {
+      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+      const now = Date.now();
       const snapshot = assistantSnapshot();
-      const generating = isGenerating();
+      const controls = generationControlState();
+      const activity = activityProgressSnapshot();
+
       if (snapshot.signature !== last.signature) {
         last = snapshot;
-        lastChangedAt = Date.now();
+        lastChangedAt = now;
+        lastProgressAt = now;
+      }
+      if (activity.signature !== lastActivity.signature) {
+        lastActivity = activity;
+        lastProgressAt = now;
+      }
+      if (controls.state !== lastControlState) {
+        lastControlState = controls.state;
+        lastProgressAt = now;
+      }
+      if (controls.state === "generating" && now - lastActiveHeartbeatAt >= ACTIVE_GENERATION_HEARTBEAT_MS) {
+        lastActiveHeartbeatAt = now;
+        lastProgressAt = now;
       }
 
-      const changed = !baseline || snapshotChanged(baseline, snapshot);
-      const stable = Date.now() - lastChangedAt >= FALLBACK_STABLE_MS;
+      const interruption = detectInterruption(settings, baseline, { allowStalled: false });
+      if (interruption) {
+        if (interruption.kind === "connection_interrupted") stopGeneratingBestEffort();
+        throw new JobInterruption(interruption.kind, interruption.message);
+      }
+
       const responseGuardrail = classifyGuardrailText(snapshot.text, "assistant");
       if (responseGuardrail?.kind === "connection_interrupted") {
         stopGeneratingBestEffort();
         throw new JobInterruption(responseGuardrail.kind, responseGuardrail.message);
       }
-      if (snapshot.count === 0 || generating || !stable) return null;
-      if (requireChange && !changed) return null;
-
-      if (responseGuardrail) {
+      if (responseGuardrail && responseGuardrail.kind !== "stalled") {
         const mature = matureGuardrail(responseGuardrail, settings);
-        if (shouldHandleInterruption(mature, settings)) {
-          if (mature.kind === "connection_interrupted") stopGeneratingBestEffort();
-          throw new JobInterruption(mature.kind, mature.message);
-        }
-        if (responseGuardrail.kind === "stalled") return null;
+        if (shouldHandleInterruption(mature, settings)) throw new JobInterruption(mature.kind, mature.message);
       }
-      return snapshot;
-    }, {
-      timeoutMs: stallAwareTimeoutMs,
-      signal,
-      checkInterruption: () => detectInterruption(settings, baseline),
-      onWait: () => status(requireChange ? "Waiting for the new response" : "Waiting for a completed response")
-    });
+
+      if (assistantCompletionReady({ snapshot, baseline, requireChange, lastChangedAt, now, controlState: controls.state })) {
+        return snapshot;
+      }
+
+      if (controls.state !== "generating" && now - lastProgressAt >= inactivityMs) {
+        throw new JobInterruption(
+          "stalled",
+          `No assistant, activity-timer, or composer-control progress was observed for ${Math.round(inactivityMs / 60000)} minutes.`
+        );
+      }
+
+      if (status && now - lastStatusAt >= STATUS_HEARTBEAT_MS) {
+        lastStatusAt = now;
+        const elapsed = activity.values.at(-1);
+        const label = requireChange ? "Waiting for the new response" : "Waiting for a completed response";
+        await status(elapsed ? `${label} · activity ${elapsed}` : label);
+      }
+      await sleep(POLL_MS, signal);
+    }
+    throw new Error("Timed out waiting for ChatGPT after the maximum 12-hour job window.");
   }
 
   async function waitForEmptyComposer(signal, status, settings, baseline) {
@@ -1116,10 +1254,11 @@
       await status("Waiting for the assigned worker chat");
       let baseline = await waitForCompletedAssistant({ signal, settings: message.settings, status });
       let retries = 0;
+      let taskPrompt = message.prompt;
       while (true) {
         try {
           const completed = await submitPrompt({
-            prompt: message.prompt,
+            prompt: taskPrompt,
             signal,
             status,
             settings: message.settings,
@@ -1127,22 +1266,85 @@
             expectedConversationId: message.workerChatId,
             delaySeconds: 0
           });
-          await runtimeMessage({
+          const response = await runtimeMessage({
             type: "PROJECT_TASK_RESULT",
             projectId: message.projectId,
             dispatchId: message.dispatchId,
             output: completed.text,
             assistantSignature: completed.signature
           });
+          if (!response || response.ok === false) throw new Error(response?.error || "Project task result could not be recorded.");
           return;
         } catch (error) {
           if (!(error instanceof JobInterruption) || error.kind !== "connection_interrupted" || retries >= 3) throw error;
           retries += 1;
           stopGeneratingBestEffort();
-          await status(`Connection interrupted; retrying task prompt (${retries}/3)`);
+          taskPrompt = "Continue from where the response was interrupted. Do not repeat completed material. When finished, return the complete required task result envelope again with no prose outside it.";
+          await status(`Connection interrupted; retrying task continuation (${retries}/3)`);
           baseline = await waitForCompletedAssistant({ signal, settings: message.settings, status });
         }
       }
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+      if (error instanceof JobInterruption) {
+        await runtimeMessage({
+          type: "PROJECT_TASK_INTERRUPTED",
+          projectId: message.projectId,
+          dispatchId: message.dispatchId,
+          kind: error.kind,
+          error: error.message
+        });
+        return;
+      }
+      await runtimeMessage({
+        type: "PROJECT_TASK_ERROR",
+        projectId: message.projectId,
+        dispatchId: message.dispatchId,
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  async function executeProjectSuccessorTask(message, controller) {
+    const signal = controller.signal;
+    const status = value => runtimeMessage({
+      type: "PROJECT_TASK_STATUS",
+      projectId: message.projectId,
+      dispatchId: message.dispatchId,
+      status: value
+    });
+    try {
+      const ready = await ensureFreshConversation({ signal, status, requestId: message.freshRequestId || message.dispatchId });
+      if (!ready) return;
+      let baseline = assistantSnapshot();
+      const completed = await submitPrompt({
+        prompt: message.prompt,
+        signal,
+        status,
+        settings: message.settings,
+        baseline,
+        expectedConversationId: null,
+        allowConversationChange: true,
+        delaySeconds: 0
+      });
+      const conversation = await waitUntil(() => {
+        const info = conversationInfo();
+        return info && info.id !== message.parentConversationId ? info : null;
+      }, {
+        timeoutMs: 30000,
+        signal,
+        checkInterruption: () => detectInterruption(message.settings, completed),
+        onWait: () => status("Waiting for the Project Mode successor chat URL")
+      });
+      const response = await runtimeMessage({
+        type: "PROJECT_SUCCESSOR_TASK_RESULT",
+        projectId: message.projectId,
+        dispatchId: message.dispatchId,
+        conversation,
+        output: completed.text,
+        assistantSignature: completed.signature
+      });
+      if (!response || response.ok === false) throw new Error(response?.error || "Project successor result could not be recorded.");
     } catch (error) {
       if (error?.name === "AbortError") return;
       if (error instanceof JobInterruption) {
@@ -1171,9 +1373,11 @@
     activeJob = { jobId: message.jobId, controller };
     const runner = message.type === "RUN_SUCCESSOR_JOB"
       ? executeSuccessorJob
-      : message.type === "RUN_PROJECT_TASK"
-        ? executeProjectTask
-        : executeJob;
+      : message.type === "RUN_PROJECT_SUCCESSOR_TASK"
+        ? executeProjectSuccessorTask
+        : message.type === "RUN_PROJECT_TASK"
+          ? executeProjectTask
+          : executeJob;
 
     runner(message, controller).finally(() => {
       if (activeJob?.jobId === message.jobId) activeJob = null;
@@ -1185,7 +1389,11 @@
       sendResponse({ ok: true, chats: getChatCatalog() });
       return false;
     }
-    if (message?.type === "RUN_CHAT_JOB" || message?.type === "RUN_SUCCESSOR_JOB" || message?.type === "RUN_PROJECT_TASK") {
+    if (message?.type === "GET_SELECTOR_HEALTH") {
+      sendResponse(selectorHealth());
+      return false;
+    }
+    if (message?.type === "RUN_CHAT_JOB" || message?.type === "RUN_SUCCESSOR_JOB" || message?.type === "RUN_PROJECT_TASK" || message?.type === "RUN_PROJECT_SUCCESSOR_TASK") {
       startJob(message);
       sendResponse({ ok: true, jobId: message.jobId });
       return false;
@@ -1221,6 +1429,11 @@
       shouldHandleInterruption,
       accessibleNodeText,
       liveNoticeTexts,
+      generationControlState,
+      isComposerIdle,
+      extractActivityElapsedValues,
+      activityProgressSnapshot,
+      assistantCompletionReady,
       isBlankConversationSurface,
       buildDurableWorkPrompt,
       buildInitializationPrompt,

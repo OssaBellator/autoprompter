@@ -5,7 +5,7 @@
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.AutoPrompterWorkerProtocol = api;
 })(typeof globalThis !== "undefined" ? globalThis : self, () => {
-  const DISPATCH_SCHEMA_VERSION = "1.0";
+  const DISPATCH_SCHEMA_VERSION = "1.1";
   const TASK_RESULT_BEGIN = "AUTOPROMPTER_TASK_RESULT_BEGIN";
   const TASK_RESULT_END = "AUTOPROMPTER_TASK_RESULT_END";
   const MAX_WORKER_PROMPT_CHARS = 18000;
@@ -37,6 +37,12 @@
     const normalizedAttempt = Math.max(1, Math.min(50, Math.round(Number(attempt) || 1)));
     const fingerprint = stableHash(`${projectId}|${revision}|${taskId}|${normalizedAttempt}|${workerChatId}`);
     return `dispatch-${safeSegment(taskId.replace(/^task-/, ""), "task", 32)}-a${normalizedAttempt}-${fingerprint}`;
+  }
+
+  function buildSuccessorDispatchId(parentDispatch, generation) {
+    const normalizedGeneration = Math.max(1, Math.min(3, Math.round(Number(generation) || 1)));
+    const fingerprint = stableHash(`${parentDispatch.originalDispatchId || parentDispatch.dispatchId}|${normalizedGeneration}`);
+    return `${parentDispatch.originalDispatchId || parentDispatch.dispatchId}-s${normalizedGeneration}-${fingerprint}`.slice(0, 200);
   }
 
   function buildBranchName(projectId, taskId, attempt) {
@@ -124,6 +130,52 @@
     return prompt;
   }
 
+  function buildWorkerSuccessorPrompt(project, task, parentDispatch, successorDispatch, reason) {
+    const prompt = [
+      "Continue a bounded AutoPrompter Project Mode worker task in a fresh ChatGPT conversation because the previous conversation reached its context limit.",
+      "The new conversation cannot see the prior transcript. Do not invent prior work or decisions.",
+      `Project: ${project.title}`,
+      `Project ID: ${project.projectId}`,
+      `Repository: ${project.repository.slug}`,
+      `Continuity file: ${project.repository.handoffFile}`,
+      `Task ID: ${task.id}`,
+      `Original dispatch ID: ${parentDispatch.originalDispatchId || parentDispatch.dispatchId}`,
+      `Active successor dispatch ID: ${successorDispatch.dispatchId}`,
+      `Successor generation: ${successorDispatch.successorGeneration}`,
+      `Assigned branch: ${successorDispatch.branch}`,
+      `Reason: ${String(reason || "maximum conversation length").slice(0, 500)}`,
+      "Inspect the repository and assigned branch before continuing. Use only repository-proven state and the task definition below.",
+      "Do not merge, publish, modify permissions, rotate accounts/models, or bypass a platform restriction.",
+      "",
+      "Task",
+      task.description,
+      "",
+      "Acceptance criteria",
+      task.acceptanceCriteria.map((item, index) => `${index + 1}. ${item}`).join("\n"),
+      "",
+      "When finished, return the complete required task-result envelope using the active successor dispatch ID.",
+      TASK_RESULT_BEGIN,
+      JSON.stringify({
+        schemaVersion: "1.0",
+        projectId: project.projectId,
+        taskId: task.id,
+        dispatchId: successorDispatch.dispatchId,
+        attempt: successorDispatch.attempt,
+        status: "completed | blocked | failed",
+        summary: "concise result",
+        commit: "commit SHA or null",
+        tests: [{ command: "command", status: "passed | failed | not_run", summary: "evidence" }],
+        filesChanged: ["relative/path"],
+        risks: [],
+        followUpTaskSuggestions: [],
+        producedAt: "canonical ISO-8601 timestamp"
+      }, null, 2),
+      TASK_RESULT_END
+    ].join("\n");
+    if (prompt.length > MAX_WORKER_PROMPT_CHARS) throw new Error(`Worker successor prompt exceeds ${MAX_WORKER_PROMPT_CHARS} characters.`);
+    return prompt;
+  }
+
   function summarizeRuntime(project, tasks, dispatches) {
     const taskValues = Object.values(tasks && typeof tasks === "object" ? tasks : {});
     const statusCounts = {};
@@ -150,10 +202,12 @@
     ACTIVE_DISPATCH_STATUSES: [...ACTIVE_DISPATCH_STATUSES],
     stableHash,
     buildDispatchId,
+    buildSuccessorDispatchId,
     buildBranchName,
     isLeaseExpired,
     activeDispatches,
     buildWorkerPrompt,
+    buildWorkerSuccessorPrompt,
     summarizeRuntime,
     clone
   };

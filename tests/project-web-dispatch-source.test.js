@@ -13,7 +13,9 @@ test("content script exposes a one-shot Project Mode task runner", () => {
   assert.match(source, /RUN_PROJECT_TASK/);
   assert.match(source, /PROJECT_TASK_RESULT/);
   assert.match(source, /PROJECT_TASK_INTERRUPTED/);
-  assert.match(source, /Connection interrupted; retrying task prompt/);
+  assert.match(source, /RUN_PROJECT_SUCCESSOR_TASK/);
+  assert.match(source, /PROJECT_SUCCESSOR_TASK_RESULT/);
+  assert.match(source, /Connection interrupted; retrying task continuation/);
 });
 
 test("background requires manual model verification and does not overlap the normal scheduler", () => {
@@ -30,10 +32,15 @@ test("popup exposes result, review, integration, and explicit dispatch controls"
   for (const id of [
     "projectModelVerified", "dispatchProjectAssignments", "projectResultInput", "submitProjectResult",
     "buildProjectReviewerPrompt", "projectReviewInput", "submitProjectReview",
-    "buildProjectIntegratorPrompt", "projectIntegrationInput", "approveProjectIntegration"
+    "buildProjectIntegratorPrompt", "projectIntegrationInput", "approveProjectIntegration",
+    "requestProjectIntegrationRetry", "projectApprovalAction", "requestProjectApproval",
+    "approveProjectAction", "rejectProjectAction", "buildProjectReconciliationPrompt",
+    "submitProjectReconciliation", "checkProjectSelectorHealth"
   ]) {
     assert.match(html, new RegExp(`id=["']${id}["']`));
     assert.match(js, new RegExp(id));
   }
   assert.match(html, /Model selection is never automated/);
+  assert.match(html, /Approval records user intent only/);
+  assert.match(js, /GET_PROJECT_SELECTOR_HEALTH/);
 });
