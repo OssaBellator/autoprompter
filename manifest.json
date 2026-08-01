@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AutoPrompter for ChatGPT",
-  "version": "2.8.0",
-  "description": "Run recent ChatGPT conversations concurrently with optional fresh-chat starts, progress tracking, continuity initialization, notifications, and guarded repository handoffs.",
+  "version": "3.0.0",
+  "description": "Create and coordinate ChatGPT Web multi-agent projects with automatic role chats, planner repair, concurrent workers, reviews, and guarded integration.",
   "minimum_chrome_version": "102",
   "permissions": [
     "storage",

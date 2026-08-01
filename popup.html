@@ -130,9 +130,12 @@
           </div>
 
           <section id="plannerWorkbench" class="planner-workbench">
-            <strong>Planner output approval</strong>
-            <p class="hint">Generate a bounded prompt, paste it into the assigned planner chat, then paste the planner's exact envelope below. AutoPrompter validates and stores it, but creates no task records until you approve it.</p>
-            <button id="buildPlannerPrompt" class="compact" type="button">Generate planner prompt</button>
+            <strong>Planner and role bootstrap</strong>
+            <p class="hint">Project creation normally creates or initializes the fixed-role chats, runs the planner, repairs malformed JSON, validates the plan, approves it, and prepares worker assignments automatically. Manual controls remain available as a fallback.</p>
+            <div class="inline-actions">
+              <button id="bootstrapProject" class="compact" type="button">Run automatic bootstrap</button>
+              <button id="buildPlannerPrompt" class="compact" type="button">Generate planner prompt manually</button>
+            </div>
             <label>
               Planner prompt
               <textarea id="plannerPromptOutput" rows="8" readonly placeholder="Generate a prompt for the assigned planner chat"></textarea>
@@ -301,8 +304,8 @@
           Integrator chat
           <select id="projectIntegratorChat"></select>
         </label>
-        <p id="projectWorkerHint" class="hint">Currently selected chats become the worker pool, excluding chats assigned to fixed roles.</p>
-        <button id="createProject" class="primary project-create" type="button">Create project draft</button>
+        <p id="projectWorkerHint" class="hint">Currently selected chats become the worker pool. Leave fixed roles on “Create automatically” to create and initialize fresh planner, reviewer, and integrator chats.</p>
+        <button id="createProject" class="primary project-create" type="button">Create and bootstrap project</button>
         <p id="projectMessage" class="hint" aria-live="polite"></p>
       </div>
     </details>

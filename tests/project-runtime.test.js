@@ -6,6 +6,10 @@ const assert = require("node:assert/strict");
 const sessionStore = {};
 const localStore = {};
 let runtimeListener = null;
+let nextTabId = 100;
+const tabsById = new Map();
+const tabMessages = [];
+const removedTabIds = [];
 
 function clone(value) {
   return value == null ? value : structuredClone(value);
@@ -13,7 +17,7 @@ function clone(value) {
 
 global.chrome = {
   runtime: {
-    getManifest: () => ({ version: "2.8.0" }),
+    getManifest: () => ({ version: "3.0.0" }),
     onMessage: { addListener(listener) { runtimeListener = listener; } }
   },
   storage: {
@@ -31,6 +35,35 @@ global.chrome = {
     }
   },
   tabs: {
+    async create(options = {}) {
+      const tab = { id: nextTabId++, url: options.url || "about:blank", active: Boolean(options.active), status: "complete" };
+      tabsById.set(tab.id, clone(tab));
+      return clone(tab);
+    },
+    async update(tabId, changes = {}) {
+      const tab = tabsById.get(tabId);
+      if (!tab) throw new Error(`Unknown tab ${tabId}`);
+      Object.assign(tab, clone(changes), { status: "complete" });
+      tabsById.set(tabId, tab);
+      return clone(tab);
+    },
+    async sendMessage(tabId, message) {
+      if (!tabsById.has(tabId)) throw new Error(`Unknown tab ${tabId}`);
+      tabMessages.push({ tabId, message: clone(message) });
+      return { ok: true, jobId: message.jobId };
+    },
+    async get(tabId) {
+      const tab = tabsById.get(tabId);
+      if (!tab) throw new Error(`Unknown tab ${tabId}`);
+      return clone(tab);
+    },
+    async remove(tabIds) {
+      for (const tabId of Array.isArray(tabIds) ? tabIds : [tabIds]) {
+        removedTabIds.push(tabId);
+        tabsById.delete(tabId);
+      }
+    },
+    async query() { return [...tabsById.values()].map(clone); },
     onRemoved: { addListener() {} },
     onUpdated: { addListener() {} }
   },
@@ -43,13 +76,17 @@ require("../background.js");
 function resetHarness() {
   for (const key of Object.keys(sessionStore)) delete sessionStore[key];
   for (const key of Object.keys(localStore)) delete localStore[key];
+  nextTabId = 100;
+  tabsById.clear();
+  tabMessages.length = 0;
+  removedTabIds.length = 0;
 }
 
-function dispatch(type, extra = {}) {
+function dispatch(type, extra = {}, sender = {}) {
   return new Promise((resolve, reject) => {
     const handled = runtimeListener(
       { scope: "AUTOPROMPTER_RUNTIME", type, ...extra },
-      {},
+      sender,
       response => resolve(response)
     );
     if (!handled) reject(new Error("message not handled"));
@@ -255,4 +292,112 @@ test("service-worker load recovers expired leases after restart", async () => {
   assert.equal(inspected.tasks["task-store"].lease, null);
   assert.equal(inspected.dispatches[dispatchId].status, "expired");
   assert.equal(inspected.runtimeSummary.activeLeaseCount, 0);
+});
+
+
+test("autonomous bootstrap creates role chats, repairs malformed planner JSON, and approves the valid plan", async () => {
+  resetHarness();
+  const input = {
+    ...projectInput(),
+    plannerChatId: null,
+    reviewerChatId: null,
+    integratorChatId: null
+  };
+  const created = await dispatch("CREATE_PROJECT", { project: input });
+  const projectId = created.project.projectId;
+
+  const started = await dispatch("START_PROJECT_BOOTSTRAP", { projectId });
+  assert.equal(started.ok, true);
+  assert.equal(started.bootstrap.status, "running");
+  assert.equal(tabsById.size, 3);
+
+  const bootstraps = localStore.autoprompterProjectBootstraps;
+  const bootstrap = bootstraps[projectId];
+  const roleIds = {
+    planner: "planner-auto",
+    reviewer: "reviewer-auto",
+    integrator: "integrator-auto"
+  };
+
+  async function readyAndLastMessage(role) {
+    const roleState = localStore.autoprompterProjectBootstraps[projectId].roles[role];
+    const response = await dispatch("CONTENT_READY", {
+      conversation: roleState.chatId
+        ? { id: roleState.chatId, url: `https://chatgpt.com/c/${roleState.chatId}` }
+        : null
+    }, { tab: { id: roleState.tabId } });
+    assert.equal(response.ok, true);
+    const sent = [...tabMessages].reverse().find(item => item.tabId === roleState.tabId);
+    assert.ok(sent, `expected a bootstrap message for ${role}`);
+    assert.equal(sent.message.type, "RUN_PROJECT_BOOTSTRAP_JOB");
+    return sent;
+  }
+
+  for (const role of ["reviewer", "integrator"]) {
+    const sent = await readyAndLastMessage(role);
+    const result = await dispatch("PROJECT_BOOTSTRAP_RESULT", {
+      projectId,
+      role,
+      stage: "role_init",
+      jobId: sent.message.jobId,
+      conversation: { id: roleIds[role], url: `https://chatgpt.com/c/${roleIds[role]}` },
+      output: `AUTOPROMPTER_ROLE_READY: ${role}`
+    }, { tab: { id: sent.tabId } });
+    assert.equal(result.ok, true);
+    assert.equal(result.bootstrap.roles[role].stage, "completed");
+  }
+
+  const plannerInit = await readyAndLastMessage("planner");
+  const plannerReady = await dispatch("PROJECT_BOOTSTRAP_RESULT", {
+    projectId,
+    role: "planner",
+    stage: "role_init",
+    jobId: plannerInit.message.jobId,
+    conversation: { id: roleIds.planner, url: `https://chatgpt.com/c/${roleIds.planner}` },
+    output: "AUTOPROMPTER_ROLE_READY: planner"
+  }, { tab: { id: plannerInit.tabId } });
+  assert.equal(plannerReady.ok, true);
+  assert.equal(plannerReady.bootstrap.roles.planner.stage, "planner_plan");
+
+  const plannerPlan = await readyAndLastMessage("planner");
+  const malformed = await dispatch("PROJECT_BOOTSTRAP_RESULT", {
+    projectId,
+    role: "planner",
+    stage: "planner_plan",
+    jobId: plannerPlan.message.jobId,
+    conversation: { id: roleIds.planner, url: `https://chatgpt.com/c/${roleIds.planner}` },
+    output: "AUTOPROMPTER_PLAN_BEGIN\n{\"schemaVersion\":\"1.0\",\"tasks\":[1 2]}\nAUTOPROMPTER_PLAN_END"
+  }, { tab: { id: plannerPlan.tabId } });
+  assert.equal(malformed.ok, true);
+  assert.equal(malformed.retrying, true);
+  assert.equal(malformed.bootstrap.repairAttempts, 1);
+  assert.equal(malformed.bootstrap.roles.planner.stage, "planner_repair");
+  assert.equal(localStore.autoprompterProjects.pendingPlansByProject[projectId], undefined);
+
+  const repair = await readyAndLastMessage("planner");
+  assert.match(repair.message.prompt, /JSON\.parse/);
+  assert.match(repair.message.prompt, /no trailing commas/i);
+  const repaired = await dispatch("PROJECT_BOOTSTRAP_RESULT", {
+    projectId,
+    role: "planner",
+    stage: "planner_repair",
+    jobId: repair.message.jobId,
+    conversation: { id: roleIds.planner, url: `https://chatgpt.com/c/${roleIds.planner}` },
+    output: plannerOutput(projectId)
+  }, { tab: { id: repair.tabId } });
+  assert.equal(repaired.ok, true);
+  assert.equal(repaired.approved, true);
+  assert.equal(repaired.bootstrap.status, "completed");
+  assert.equal(repaired.bootstrap.planValidated, true);
+  assert.equal(repaired.bootstrap.planApproved, true);
+  assert.equal(repaired.bootstrap.assignmentCount, 1);
+
+  const inspected = await dispatch("INSPECT_PROJECT", { projectId });
+  assert.equal(inspected.project.status, "running");
+  assert.equal(inspected.approvedPlan.revision, 1);
+  assert.equal(inspected.pendingPlan, null);
+  assert.equal(inspected.tasks["task-store"].status, "leased");
+  assert.equal(inspected.dispatches[Object.keys(inspected.dispatches)[0]].status, "prepared");
+  assert.equal(tabMessages.some(item => item.message.type === "RUN_PROJECT_TASK"), false);
+  assert.equal(new Set(removedTabIds).size, 3);
 });

@@ -16,6 +16,9 @@ const SETTINGS_KEY = "autoprompterSettings";
 const CATALOG_KEY = "autoprompterChatCatalog";
 const SELECTION_KEY = "autoprompterSelectedChatIds";
 const CHAT_CONFIGS_KEY = "autoprompterChatConfigs";
+const PROJECT_BOOTSTRAP_KEY = "autoprompterProjectBootstraps";
+const MAX_PROJECT_BOOTSTRAP_REPAIRS = 3;
+const MAX_ROLE_INIT_RETRIES = 2;
 const NEW_CHAT_URL = "https://chatgpt.com/";
 const CONNECTION_RETRY_PROMPT = "Continue from where the response was interrupted. Do not repeat completed material.";
 const MAX_CONNECTION_RETRIES = 3;
@@ -340,6 +343,436 @@ async function listProjectState() {
   };
 }
 
+async function loadProjectBootstraps() {
+  const stored = await chrome.storage.local.get(PROJECT_BOOTSTRAP_KEY);
+  const value = stored?.[PROJECT_BOOTSTRAP_KEY];
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+async function saveProjectBootstraps(bootstraps) {
+  await chrome.storage.local.set({ [PROJECT_BOOTSTRAP_KEY]: bootstraps });
+}
+
+function publicProjectBootstrap(bootstrap) {
+  if (!bootstrap) return null;
+  return {
+    projectId: bootstrap.projectId,
+    status: bootstrap.status,
+    error: bootstrap.error || "",
+    repairAttempts: Number(bootstrap.repairAttempts || 0),
+    maxRepairAttempts: MAX_PROJECT_BOOTSTRAP_REPAIRS,
+    planValidated: Boolean(bootstrap.planValidated),
+    planApproved: Boolean(bootstrap.planApproved),
+    planSummary: bootstrap.planSummary || null,
+    assignmentCount: Number(bootstrap.assignmentCount || 0),
+    createdAt: bootstrap.createdAt,
+    updatedAt: bootstrap.updatedAt,
+    roles: Object.fromEntries(Object.entries(bootstrap.roles || {}).map(([role, state]) => [role, {
+      chatId: state.chatId || null,
+      stage: state.stage,
+      status: state.status || "",
+      error: state.error || "",
+      retries: Number(state.retries || 0)
+    }]))
+  };
+}
+
+function buildProjectRolePrompt(project, role) {
+  const responsibilities = {
+    planner: "Create bounded, machine-readable project plans. Do not implement tasks or invent repository state.",
+    reviewer: "Independently evaluate worker evidence against task acceptance criteria. Do not accept unsupported claims.",
+    integrator: "Integrate only independently accepted task results, report conflicts, and never merge or publish without explicit approval."
+  };
+  return [
+    `You are the dedicated ${role} agent for AutoPrompter Project Mode.`,
+    `Project: ${project.title} (${project.projectId})`,
+    `Repository: ${project.repository.slug}`,
+    responsibilities[role],
+    "All inference remains in ChatGPT Web. Follow platform restrictions and do not rotate accounts, models, chats, or endpoints to evade limits.",
+    "Use repository evidence and structured AutoPrompter envelopes when later prompts request them.",
+    "Acknowledge initialization with exactly this single line and no other text:",
+    `AUTOPROMPTER_ROLE_READY: ${role}`
+  ].join("\n");
+}
+
+function buildPlannerRepairPrompt(error, attempt) {
+  return [
+    `Your previous AutoPrompter planner envelope failed validation on repair attempt ${attempt}.`,
+    `Validation error: ${String(error || "Unknown planner validation error").slice(0, 2000)}`,
+    "Correct your immediately previous plan. Return the complete corrected AUTOPROMPTER_PLAN_BEGIN / AUTOPROMPTER_PLAN_END envelope again.",
+    "The content between the markers must be strict JSON parseable by JSON.parse: double-quoted keys and strings, escaped newlines, no comments, no trailing commas, and no Markdown fences.",
+    "Preserve the required project ID and revision. Do not add prose outside the envelope."
+  ].join("\n");
+}
+
+function findProjectBootstrapByTab(bootstraps, tabId) {
+  if (!Number.isInteger(tabId)) return null;
+  for (const [projectId, bootstrap] of Object.entries(bootstraps || {})) {
+    for (const [role, state] of Object.entries(bootstrap.roles || {})) {
+      if (state?.tabId === tabId && !["completed", "failed"].includes(state.stage)) {
+        return { projectId, role, bootstrap, state };
+      }
+    }
+  }
+  return null;
+}
+
+async function saveBootstrapConversationToCatalog(project, role, conversation) {
+  if (!conversation?.id || !conversation?.url) return;
+  const stored = await chrome.storage.local.get(CATALOG_KEY);
+  const catalog = Array.isArray(stored[CATALOG_KEY]) ? stored[CATALOG_KEY] : [];
+  const item = {
+    id: conversation.id,
+    url: conversation.url,
+    title: `${project.title} · ${role[0].toUpperCase()}${role.slice(1)}`
+  };
+  await chrome.storage.local.set({
+    [CATALOG_KEY]: [item, ...catalog.filter(chat => chat.id !== item.id)].slice(0, 500)
+  });
+}
+
+async function dispatchProjectBootstrapJob(projectId, role) {
+  const bootstraps = await loadProjectBootstraps();
+  const bootstrap = bootstraps[projectId];
+  const state = bootstrap?.roles?.[role];
+  if (!bootstrap || !state || !Number.isInteger(state.tabId) || state.jobDispatched || ["completed", "failed"].includes(state.stage)) {
+    return false;
+  }
+  state.jobDispatched = true;
+  state.status = `Submitting ${state.stage.replace(/_/g, " ")}`;
+  state.jobId = `${projectId}:${role}:${state.stage}:${Date.now()}`;
+  bootstrap.updatedAt = new Date().toISOString();
+  await saveProjectBootstraps(bootstraps);
+  const stored = await chrome.storage.local.get(SETTINGS_KEY);
+  const settings = normalizeSettings({
+    ...(stored[SETTINGS_KEY] || {}),
+    continuityEnabled: false,
+    delaySeconds: 5,
+    checkpointBeforePrompt: false,
+    checkpointAfterPrompt: false
+  });
+  try {
+    await chrome.tabs.sendMessage(state.tabId, {
+      type: "RUN_PROJECT_BOOTSTRAP_JOB",
+      jobId: state.jobId,
+      projectId,
+      role,
+      stage: state.stage,
+      prompt: state.prompt,
+      expectedConversationId: state.chatId || null,
+      freshRequestId: state.freshRequestId,
+      settings
+    });
+    return true;
+  } catch (error) {
+    state.jobDispatched = false;
+    state.status = "Waiting for page readiness";
+    state.error = error?.message || String(error);
+    bootstrap.updatedAt = new Date().toISOString();
+    await saveProjectBootstraps(bootstraps);
+    return false;
+  }
+}
+
+function scheduleProjectBootstrapDispatch(projectId, role, delay = 300) {
+  setTimeout(() => enqueue(() => dispatchProjectBootstrapJob(projectId, role)).catch(() => {}), delay);
+}
+
+async function startProjectBootstrapState(projectId) {
+  const scheduler = await loadState();
+  if (scheduler?.running) throw new Error("Stop the normal AutoPrompter scheduler before creating Project Mode role chats.");
+  let store = await loadProjectStore();
+  const project = store.projects[projectId];
+  if (!project) throw new Error("Project not found.");
+  if (store.approvedPlansByProject[projectId] || Object.keys(store.tasksByProject[projectId] || {}).length) {
+    throw new Error("This project already has an approved plan or task records.");
+  }
+  const bootstraps = await loadProjectBootstraps();
+  const existing = bootstraps[projectId];
+  if (existing && ["starting", "running"].includes(existing.status)) {
+    return { bootstrap: publicProjectBootstrap(existing), project };
+  }
+
+  const stored = await chrome.storage.local.get(CATALOG_KEY);
+  const catalog = Array.isArray(stored[CATALOG_KEY]) ? stored[CATALOG_KEY] : [];
+  const byId = new Map(catalog.map(chat => [chat.id, chat]));
+  const roleKeys = { planner: "plannerChatId", reviewer: "reviewerChatId", integrator: "integratorChatId" };
+  const roleNames = Object.keys(roleKeys);
+  const tabs = await Promise.all(roleNames.map(() => chrome.tabs.create({ url: "about:blank", active: false })));
+  const createdAt = new Date().toISOString();
+  const roles = {};
+  try {
+    for (let index = 0; index < roleNames.length; index += 1) {
+      const role = roleNames[index];
+      const chatId = project.roles[roleKeys[role]] || null;
+      const catalogChat = chatId ? byId.get(chatId) : null;
+      if (chatId && !catalogChat?.url) {
+        throw new Error(`${role} chat ${chatId} is missing from the local catalog. Refresh the ChatGPT sidebar or choose Create automatically.`);
+      }
+      roles[role] = {
+        role,
+        chatId,
+        tabId: tabs[index].id,
+        stage: "role_init",
+        status: "Opening role chat",
+        error: "",
+        retries: 0,
+        jobDispatched: false,
+        jobId: null,
+        prompt: buildProjectRolePrompt(project, role),
+        freshRequestId: `${projectId}:${role}:${Date.now()}:${index}`
+      };
+    }
+  } catch (error) {
+    await removeManagedTabs(tabs.map(tab => tab.id));
+    throw error;
+  }
+
+  const bootstrap = {
+    projectId,
+    status: "starting",
+    error: "",
+    repairAttempts: 0,
+    planValidated: false,
+    planApproved: false,
+    createdAt,
+    updatedAt: createdAt,
+    roles
+  };
+  bootstraps[projectId] = bootstrap;
+  project.status = "planning";
+  project.updatedAt = createdAt;
+  await saveProjectStore(store);
+  await saveProjectBootstraps(bootstraps);
+
+  try {
+    await Promise.all(roleNames.map(async role => {
+      const state = roles[role];
+      const target = state.chatId
+        ? byId.get(state.chatId).url
+        : freshChatUrl(state.freshRequestId, projectId, role);
+      await chrome.tabs.update(state.tabId, { url: target, active: false });
+    }));
+  } catch (error) {
+    return failProjectBootstrap(projectId, "planner", `Could not open Project Mode role chats: ${error?.message || String(error)}`);
+  }
+  bootstrap.status = "running";
+  bootstrap.updatedAt = new Date().toISOString();
+  await saveProjectBootstraps(bootstraps);
+  return { project, bootstrap: publicProjectBootstrap(bootstrap) };
+}
+
+async function getProjectBootstrapState(projectId) {
+  const bootstraps = await loadProjectBootstraps();
+  return { bootstrap: publicProjectBootstrap(bootstraps[projectId]) };
+}
+
+async function updateProjectBootstrapStatus(message, sender) {
+  const bootstraps = await loadProjectBootstraps();
+  const bootstrap = bootstraps[message.projectId];
+  const state = bootstrap?.roles?.[message.role];
+  if (!bootstrap || !state || state.tabId !== sender?.tab?.id || state.jobId !== message.jobId || state.stage !== message.stage) {
+    return { bootstrap: publicProjectBootstrap(bootstrap) };
+  }
+  state.status = String(message.status || "Working").slice(0, 300);
+  bootstrap.updatedAt = new Date().toISOString();
+  await saveProjectBootstraps(bootstraps);
+  return { bootstrap: publicProjectBootstrap(bootstrap) };
+}
+
+
+async function failProjectBootstrap(projectId, role, error) {
+  const bootstraps = await loadProjectBootstraps();
+  const bootstrap = bootstraps[projectId];
+  if (!bootstrap) return { bootstrap: null };
+  bootstrap.status = "failed";
+  bootstrap.error = String(error || "Project bootstrap failed.").slice(0, 2000);
+  bootstrap.updatedAt = new Date().toISOString();
+  if (bootstrap.roles?.[role]) {
+    bootstrap.roles[role].stage = "failed";
+    bootstrap.roles[role].status = "Failed";
+    bootstrap.roles[role].error = bootstrap.error;
+  }
+  const tabIds = Object.values(bootstrap.roles || {}).map(state => state.tabId).filter(Number.isInteger);
+  for (const state of Object.values(bootstrap.roles || {})) state.tabId = null;
+  await saveProjectBootstraps(bootstraps);
+  const store = await loadProjectStore();
+  if (store.projects[projectId] && !store.approvedPlansByProject[projectId]) {
+    delete store.pendingPlansByProject[projectId];
+    store.projects[projectId].status = "draft";
+    store.projects[projectId].updatedAt = new Date().toISOString();
+    await saveProjectStore(store);
+  }
+  await removeManagedTabs(tabIds);
+  return { bootstrap: publicProjectBootstrap(bootstrap) };
+}
+
+async function maybeCompleteProjectBootstrap(projectId, bootstraps) {
+  const bootstrap = bootstraps[projectId];
+  if (!bootstrap?.planApproved || !Object.values(bootstrap.roles || {}).every(state => state.stage === "completed")) {
+    return false;
+  }
+  bootstrap.status = "completed";
+  bootstrap.updatedAt = new Date().toISOString();
+  const tabIds = Object.values(bootstrap.roles).map(state => state.tabId).filter(Number.isInteger);
+  for (const state of Object.values(bootstrap.roles)) state.tabId = null;
+  await saveProjectBootstraps(bootstraps);
+  await removeManagedTabs(tabIds);
+  return true;
+}
+
+async function maybeApproveProjectBootstrapPlan(projectId, bootstraps) {
+  const bootstrap = bootstraps[projectId];
+  if (!bootstrap?.planValidated || bootstrap.planApproved) return false;
+  const supportingRolesReady = ["reviewer", "integrator"].every(role => bootstrap.roles?.[role]?.stage === "completed");
+  if (!supportingRolesReady) return false;
+  const store = await loadProjectStore();
+  const approved = ProjectStore.approveProjectPlan(store, projectId);
+  let finalStore = approved.store;
+  let assignments = [];
+  if (approved.project.roles.workerChatIds.length) {
+    const started = ProjectStore.startProject(finalStore, projectId);
+    const prepared = ProjectStore.prepareProjectDispatches(started.store, projectId);
+    finalStore = prepared.store;
+    assignments = prepared.assignments;
+  }
+  await saveProjectStore(finalStore);
+  bootstrap.planApproved = true;
+  bootstrap.planSummary = approved.summary;
+  bootstrap.assignmentCount = assignments.length;
+  bootstrap.roles.planner.stage = "completed";
+  bootstrap.roles.planner.status = assignments.length
+    ? `Plan approved; ${assignments.length} worker assignment${assignments.length === 1 ? "" : "s"} prepared`
+    : `Plan revision ${approved.summary.revision} approved`;
+  bootstrap.roles.planner.error = "";
+  bootstrap.roles.planner.jobDispatched = false;
+  bootstrap.updatedAt = new Date().toISOString();
+  await saveProjectBootstraps(bootstraps);
+  await maybeCompleteProjectBootstrap(projectId, bootstraps);
+  return true;
+}
+
+async function handleProjectBootstrapResult(message, sender) {
+  const bootstraps = await loadProjectBootstraps();
+  const bootstrap = bootstraps[message.projectId];
+  const roleState = bootstrap?.roles?.[message.role];
+  if (!bootstrap || !roleState || roleState.tabId !== sender?.tab?.id || roleState.jobId !== message.jobId || roleState.stage !== message.stage) {
+    throw new Error("Stale or mismatched Project Mode bootstrap result.");
+  }
+  const conversation = message.conversation;
+  if (!conversation?.id || !conversation?.url) {
+    return failProjectBootstrap(message.projectId, message.role, "ChatGPT did not expose a verified conversation ID for the role chat.");
+  }
+  let store = await loadProjectStore();
+  const project = store.projects[message.projectId];
+  if (!project) return failProjectBootstrap(message.projectId, message.role, "Project not found while recording bootstrap output.");
+
+  if (message.stage === "role_init") {
+    const marker = `AUTOPROMPTER_ROLE_READY: ${message.role}`;
+    const hasMarker = String(message.output || "")
+      .split(/\r?\n/)
+      .some(line => line.trim().toLowerCase() === marker.toLowerCase());
+    if (!hasMarker) {
+      if (roleState.retries < MAX_ROLE_INIT_RETRIES) {
+        roleState.retries += 1;
+        roleState.jobDispatched = false;
+        roleState.status = `Retrying role initialization (${roleState.retries}/${MAX_ROLE_INIT_RETRIES})`;
+        roleState.prompt = `${buildProjectRolePrompt(project, message.role)}\nYour previous response did not contain the exact acknowledgement. Return only the required line.`;
+        bootstrap.updatedAt = new Date().toISOString();
+        await saveProjectBootstraps(bootstraps);
+        scheduleProjectBootstrapDispatch(message.projectId, message.role);
+        return { bootstrap: publicProjectBootstrap(bootstrap), retrying: true };
+      }
+      return failProjectBootstrap(message.projectId, message.role, `The ${message.role} chat did not return its required role-ready marker.`);
+    }
+    const bound = ProjectStore.bindProjectRoleChat(store, message.projectId, message.role, conversation.id);
+    store = bound.store;
+    await saveProjectStore(store);
+    await saveBootstrapConversationToCatalog(bound.project, message.role, conversation);
+    roleState.chatId = conversation.id;
+    roleState.error = "";
+    roleState.jobDispatched = false;
+    if (message.role === "planner") {
+      const planned = ProjectStore.buildProjectPlannerPrompt(store, message.projectId);
+      roleState.stage = "planner_plan";
+      roleState.status = "Preparing planner prompt";
+      roleState.prompt = planned.prompt;
+      bootstrap.updatedAt = new Date().toISOString();
+      await saveProjectBootstraps(bootstraps);
+      scheduleProjectBootstrapDispatch(message.projectId, message.role);
+    } else {
+      roleState.stage = "completed";
+      roleState.status = "Role initialized";
+      const tabId = roleState.tabId;
+      roleState.tabId = null;
+      bootstrap.updatedAt = new Date().toISOString();
+      await saveProjectBootstraps(bootstraps);
+      await removeManagedTab(tabId);
+      await maybeApproveProjectBootstrapPlan(message.projectId, bootstraps);
+      await maybeCompleteProjectBootstrap(message.projectId, bootstraps);
+    }
+    return { bootstrap: publicProjectBootstrap(bootstrap), roleChatId: conversation.id };
+  }
+
+  if (["planner_plan", "planner_repair"].includes(message.stage)) {
+    try {
+      const submitted = ProjectStore.submitProjectPlannerOutput(store, message.projectId, message.output);
+      await saveProjectStore(submitted.store);
+      roleState.stage = "planner_validated";
+      roleState.status = `Plan revision ${submitted.summary.revision} validated; waiting for role initialization`;
+      roleState.error = "";
+      roleState.jobDispatched = false;
+      bootstrap.planValidated = true;
+      bootstrap.planSummary = submitted.summary;
+      bootstrap.updatedAt = new Date().toISOString();
+      await saveProjectBootstraps(bootstraps);
+      const approved = await maybeApproveProjectBootstrapPlan(message.projectId, bootstraps);
+      return { bootstrap: publicProjectBootstrap(bootstrap), planSummary: submitted.summary, approved };
+    } catch (error) {
+      if (bootstrap.repairAttempts < MAX_PROJECT_BOOTSTRAP_REPAIRS) {
+        bootstrap.repairAttempts += 1;
+        roleState.stage = "planner_repair";
+        roleState.status = `Repairing planner JSON (${bootstrap.repairAttempts}/${MAX_PROJECT_BOOTSTRAP_REPAIRS})`;
+        roleState.error = error?.message || String(error);
+        roleState.prompt = buildPlannerRepairPrompt(roleState.error, bootstrap.repairAttempts);
+        roleState.jobDispatched = false;
+        bootstrap.updatedAt = new Date().toISOString();
+        await saveProjectBootstraps(bootstraps);
+        scheduleProjectBootstrapDispatch(message.projectId, message.role);
+        return { bootstrap: publicProjectBootstrap(bootstrap), retrying: true, error: roleState.error };
+      }
+      return failProjectBootstrap(
+        message.projectId,
+        message.role,
+        `Planner validation failed after ${MAX_PROJECT_BOOTSTRAP_REPAIRS} repairs: ${error?.message || String(error)}`
+      );
+    }
+  }
+  throw new Error(`Unsupported Project Mode bootstrap stage: ${message.stage}`);
+}
+
+async function handleProjectBootstrapError(message, sender) {
+  const bootstraps = await loadProjectBootstraps();
+  const bootstrap = bootstraps[message.projectId];
+  const roleState = bootstrap?.roles?.[message.role];
+  if (!bootstrap || !roleState || roleState.tabId !== sender?.tab?.id || roleState.jobId !== message.jobId) {
+    return { bootstrap: publicProjectBootstrap(bootstrap) };
+  }
+  if (["connection_interrupted", "extended_thinking_retry"].includes(message.kind) && roleState.retries < 3) {
+    roleState.retries += 1;
+    roleState.jobDispatched = false;
+    roleState.status = `Retrying interrupted bootstrap (${roleState.retries}/3)`;
+    roleState.prompt = message.stage === "role_init"
+      ? roleState.prompt
+      : "Continue from where the response was interrupted. Return the complete required AutoPrompter envelope again with no prose outside it.";
+    bootstrap.updatedAt = new Date().toISOString();
+    await saveProjectBootstraps(bootstraps);
+    scheduleProjectBootstrapDispatch(message.projectId, message.role);
+    return { bootstrap: publicProjectBootstrap(bootstrap), retrying: true };
+  }
+  return failProjectBootstrap(message.projectId, message.role, message.error || message.kind || "Project bootstrap failed.");
+}
+
 async function createProjectState(input) {
   const store = await loadProjectStore();
   const result = ProjectStore.createProject(store, input);
@@ -382,9 +815,24 @@ async function transitionProjectState(projectId, action) {
   const tabIds = action === "cancel"
     ? Object.values(store.dispatchesByProject[projectId] || {}).map(dispatch => dispatch.workerTabId).filter(Number.isInteger)
     : [];
+  if (action === "cancel") {
+    const bootstraps = await loadProjectBootstraps();
+    const bootstrap = bootstraps[projectId];
+    if (bootstrap && ["starting", "running"].includes(bootstrap.status)) {
+      bootstrap.status = "cancelled";
+      bootstrap.error = "Cancelled by user";
+      bootstrap.updatedAt = new Date().toISOString();
+      for (const state of Object.values(bootstrap.roles || {})) {
+        if (Number.isInteger(state.tabId)) tabIds.push(state.tabId);
+        state.tabId = null;
+        if (!['completed', 'failed'].includes(state.stage)) state.stage = "failed";
+      }
+      await saveProjectBootstraps(bootstraps);
+    }
+  }
   const result = ProjectStore.transitionProject(store, projectId, action);
   await saveProjectStore(result.store);
-  if (tabIds.length) await removeManagedTabs(tabIds);
+  if (tabIds.length) await removeManagedTabs([...new Set(tabIds)]);
   return {
     projectStoreVersion: result.store.schemaVersion,
     activeProjectId: result.store.activeProjectId,
@@ -1497,6 +1945,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return listProjectState();
       case "CREATE_PROJECT":
         return createProjectState(message.project);
+      case "START_PROJECT_BOOTSTRAP":
+        return startProjectBootstrapState(message.projectId);
+      case "GET_PROJECT_BOOTSTRAP":
+        return getProjectBootstrapState(message.projectId);
+      case "PROJECT_BOOTSTRAP_STATUS":
+        return updateProjectBootstrapStatus(message, sender);
+      case "PROJECT_BOOTSTRAP_RESULT":
+        return handleProjectBootstrapResult(message, sender);
+      case "PROJECT_BOOTSTRAP_ERROR":
+        return handleProjectBootstrapError(message, sender);
       case "INSPECT_PROJECT":
         return inspectProjectState(message.projectId);
       case "PAUSE_PROJECT":
@@ -1557,6 +2015,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "PROJECT_TASK_ERROR":
         return failProjectDispatch(message, sender);
       case "CONTENT_READY": {
+        const bootstraps = await loadProjectBootstraps();
+        const projectBootstrap = findProjectBootstrapByTab(bootstraps, sender.tab?.id);
+        if (projectBootstrap) {
+          await dispatchProjectBootstrapJob(projectBootstrap.projectId, projectBootstrap.role);
+          return { ok: true, projectBootstrap: publicProjectBootstrap(projectBootstrap.bootstrap) };
+        }
         const projectStore = await loadProjectStore();
         const projectWorker = findProjectDispatchByTab(projectStore, sender.tab?.id);
         if (projectWorker) {
@@ -1616,6 +2080,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.tabs.onRemoved.addListener(tabId => {
   enqueue(async () => {
+    const bootstraps = await loadProjectBootstraps();
+    const bootstrapWorker = findProjectBootstrapByTab(bootstraps, tabId);
+    if (bootstrapWorker) {
+      await failProjectBootstrap(
+        bootstrapWorker.projectId,
+        bootstrapWorker.role,
+        `The managed ${bootstrapWorker.role} bootstrap tab was closed.`
+      );
+      return;
+    }
     const state = await loadState();
     const index = findChatIndexByTab(state, tabId);
     if (state?.running && index >= 0) {
@@ -1656,6 +2130,12 @@ if (typeof module !== "undefined") {
     CONNECTION_RETRY_PROMPT,
     MAX_CONNECTION_RETRIES,
     INITIAL_BATCH_GRACE_MS,
+    PROJECT_BOOTSTRAP_KEY,
+    MAX_PROJECT_BOOTSTRAP_REPAIRS,
+    MAX_ROLE_INIT_RETRIES,
+    buildProjectRolePrompt,
+    buildPlannerRepairPrompt,
+    publicProjectBootstrap,
     PlannerProtocol,
     WorkerProtocol,
     ResultProtocol,

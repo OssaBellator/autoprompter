@@ -1210,6 +1210,29 @@
     };
   }
 
+
+  function bindProjectRoleChat(storeInput, projectId, role, chatId, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const roleKeys = { planner: "plannerChatId", reviewer: "reviewerChatId", integrator: "integratorChatId" };
+    const key = roleKeys[String(role || "")];
+    if (!key) throw new Error("Unknown Project Mode role.");
+    const normalizedChatId = normalizeChatId(chatId);
+    if (!normalizedChatId) throw new Error(`A conversation ID is required for the ${role} role.`);
+    const occupied = ["plannerChatId", "reviewerChatId", "integratorChatId"]
+      .filter(candidate => candidate !== key)
+      .map(candidate => project.roles[candidate])
+      .filter(Boolean);
+    if (occupied.includes(normalizedChatId)) throw new Error("Planner, reviewer, and integrator chats must be different.");
+    project.roles[key] = normalizedChatId;
+    project.roles.workerChatIds = project.roles.workerChatIds.filter(id => id !== normalizedChatId);
+    const at = nowIso(clock);
+    project.updatedAt = at;
+    store.activeProjectId = id;
+    appendEvent(store, "project_role_bound", id, at, `${role} role bound to ${normalizedChatId}`);
+    return { store, project: clone(project), role, chatId: normalizedChatId };
+  }
+
   function transitionProject(storeInput, projectId, action, clock = Date.now) {
     const store = clone(storeInput);
     const id = String(projectId || store.activeProjectId || "");
@@ -1275,6 +1298,7 @@
     normalizeStoredProject,
     createProject,
     inspectProject,
+    bindProjectRoleChat,
     transitionProject,
     listProjects,
     nextPlanRevision,
