@@ -1604,7 +1604,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "SUCCESSOR_CREATED":
         return successorCreated(message, sender);
       default:
-        return { running: false, status: "Unknown command" };
+        throw new Error(`Unknown AutoPrompter runtime command: ${String(message.type || "missing")}`);
     }
   };
 
