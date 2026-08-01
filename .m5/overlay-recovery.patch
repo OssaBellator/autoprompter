@@ -160,3 +160,75 @@
  test("current maximum-length wording triggers context rollover", () => {
    const exact = "You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.";
    assert.equal(classifyGuardrailText(exact, "notice").kind, "context_limit");
+--- a/popup.html
++++ b/popup.html
+@@ -149,7 +149,7 @@
+     <details id="projectModePanel" class="continuity project-mode">
+       <summary>Project Mode foundation</summary>
+       <div class="details-body">
+-        <p class="hint">Create durable project state, validate and approve a planner envelope, then prepare bounded worker leases. Project Mode still does not send planner, worker, reviewer, or integrator prompts.</p>
++        <p class="hint">Create durable project state, validate and approve a planner envelope, prepare bounded worker leases, and explicitly send selected assignments after manual model verification. Planner, reviewer, and integrator prompts remain manual.</p>
+ 
+         <div class="project-toolbar">
+           <label>
+--- a/tests/popup-source.test.js
++++ b/tests/popup-source.test.js
+@@ -34,7 +34,7 @@
+ test("Project Mode foundation exposes lifecycle and approval-gated planner controls", () => {
+   assert.match(popupHtml, /id="projectModePanel"/);
+   assert.match(popupHtml, /id="createProject"/);
+-  assert.match(popupHtml, /does not send planner, worker, reviewer, or integrator prompts/);
++  assert.match(popupHtml, /Planner, reviewer, and integrator prompts remain manual/);
+   assert.match(popupJs, /runtimeMessage\("CREATE_PROJECT"/);
+   assert.match(popupJs, /runtimeMessage\("INSPECT_PROJECT"/);
+   assert.match(popupJs, /transitionProject\("PAUSE_PROJECT"\)/);
+@@ -50,7 +50,7 @@
+   assert.match(popupHtml, /id="startProjectMode"/);
+   assert.match(popupHtml, /id="prepareProjectAssignments"/);
+   assert.match(popupHtml, /id="recoverProjectLeases"/);
+-  assert.match(popupHtml, /Prepared prompts stay in extension storage and are not sent to ChatGPT/);
++  assert.match(popupHtml, /id="dispatchProjectAssignments"/);
+   assert.match(popupJs, /runtimeMessage\("START_PROJECT_MODE"/);
+   assert.match(popupJs, /runtimeMessage\("PREPARE_PROJECT_ASSIGNMENTS"/);
+   assert.match(popupJs, /runtimeMessage\("RECOVER_PROJECT_LEASES"/);
+--- a/tests/project-runtime.test.js
++++ b/tests/project-runtime.test.js
+@@ -117,9 +117,9 @@
+   resetHarness();
+   const response = await dispatch("GET_PROJECTS");
+   assert.equal(response.ok, true);
+-  assert.equal(response.projectStoreVersion, "1.2");
++  assert.equal(response.projectStoreVersion, "1.4");
+   assert.deepEqual(response.projects, []);
+-  assert.equal(localStore.autoprompterProjects.schemaVersion, "1.2");
++  assert.equal(localStore.autoprompterProjects.schemaVersion, "1.4");
+ });
+ 
+ test("project lifecycle commands persist deterministic transitions", async () => {
+--- a/tests/project-store.test.js
++++ b/tests/project-store.test.js
+@@ -153,7 +153,7 @@
+   return `${PLAN_BEGIN}\n${JSON.stringify(plannerPlan(projectId, overrides))}\n${PLAN_END}`;
+ }
+ 
+-test("migrates older project stores to lease-capable schema 1.2", () => {
++test("migrates older project stores to result-and-integration-capable schema 1.4", () => {
+   const created = createProject(emptyStore(), validInput(), fixedClock);
+   const migrated = migrateStore({
+     schemaVersion: "1.0",
+@@ -162,11 +162,14 @@
+     resumeStatusByProject: {},
+     events: created.store.events
+   });
+-  assert.equal(migrated.store.schemaVersion, "1.2");
++  assert.equal(migrated.store.schemaVersion, "1.4");
+   assert.deepEqual(migrated.store.pendingPlansByProject, {});
+   assert.deepEqual(migrated.store.approvedPlansByProject, {});
+   assert.deepEqual(migrated.store.tasksByProject, {});
+   assert.deepEqual(migrated.store.dispatchesByProject, {});
++  assert.deepEqual(migrated.store.resultsByProject, {});
++  assert.deepEqual(migrated.store.reviewsByProject, {});
++  assert.deepEqual(migrated.store.integrationsByProject, {});
+ });
+ 
+ test("planner output remains pending until explicit approval creates tasks", () => {
