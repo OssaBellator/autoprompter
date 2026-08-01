@@ -41,7 +41,11 @@ const elements = Object.fromEntries([
   "plannerWorkbench", "buildPlannerPrompt", "plannerPromptOutput", "plannerResponseInput",
   "validatePlannerOutput", "approveProjectPlan", "discardProjectPlan", "plannerPlanSummary",
   "workerWorkbench", "startProjectMode", "prepareProjectAssignments", "recoverProjectLeases",
-  "projectWorkerState", "projectDispatchSelect", "projectDispatchPrompt"
+  "projectWorkerState", "projectDispatchSelect", "projectDispatchPrompt", "projectModelVerified",
+  "dispatchProjectAssignments", "projectResultInput", "submitProjectResult", "buildProjectReviewerPrompt",
+  "projectReviewerPrompt", "projectReviewInput", "submitProjectReview", "buildProjectIntegratorPrompt",
+  "projectIntegratorPrompt", "projectIntegrationInput", "submitProjectIntegration",
+  "approveProjectIntegration", "discardProjectIntegration"
 ].map(id => [id, document.getElementById(id)]));
 
 let catalog = [];
@@ -55,7 +59,7 @@ let chatConfigPersistTimer = null;
 let wasRunning = false;
 let projectState = {
   projects: [], activeProjectId: null, project: null, events: [],
-  pendingPlan: null, approvedPlan: null, tasks: {}, dispatches: {}, runtimeSummary: null,
+  pendingPlan: null, approvedPlan: null, tasks: {}, dispatches: {}, results: {}, reviews: {}, integration: null, runtimeSummary: null,
   plannerPromptProjectId: ""
 };
 
@@ -248,6 +252,9 @@ function renderProjectState() {
   const tasks = projectState.tasks && typeof projectState.tasks === "object" ? projectState.tasks : {};
   const dispatches = projectState.dispatches && typeof projectState.dispatches === "object" ? projectState.dispatches : {};
   const runtimeSummary = projectState.runtimeSummary || null;
+  const results = projectState.results && typeof projectState.results === "object" ? projectState.results : {};
+  const reviews = projectState.reviews && typeof projectState.reviews === "object" ? projectState.reviews : {};
+  const integration = projectState.integration || null;
   const pendingSummary = projectState.pendingPlan ? {
     revision: projectState.pendingPlan.revision,
     phases: projectState.pendingPlan.phases.length,
@@ -272,7 +279,10 @@ function renderProjectState() {
       return counts;
     }, {}),
     runtime: runtimeSummary,
-    recentEvents: (projectState.events || []).slice(-5)
+    resultCount: Object.keys(results).length,
+    reviewCount: Object.keys(reviews).length,
+    integration,
+    recentEvents: (projectState.events || []).slice(-8)
   }, null, 2);
   elements.pauseProject.disabled = !["draft", "planning", "ready", "running"].includes(project.status);
   elements.resumeProject.disabled = project.status !== "paused";
@@ -296,6 +306,17 @@ function renderProjectState() {
   elements.startProjectMode.disabled = project.status !== "ready" || !projectState.approvedPlan || !Object.keys(tasks).length;
   elements.prepareProjectAssignments.disabled = project.status !== "running" || !Object.values(tasks).some(task => task.status === "ready");
   elements.recoverProjectLeases.disabled = !Object.values(tasks).some(task => task.lease);
+  const selectedDispatch = dispatches[elements.projectDispatchSelect.value];
+  elements.dispatchProjectAssignments.disabled = project.status !== "running"
+    || !elements.projectModelVerified.checked
+    || !Object.values(dispatches).some(dispatch => dispatch.status === "prepared");
+  elements.submitProjectResult.disabled = !selectedDispatch || !elements.projectResultInput.value.trim();
+  elements.buildProjectReviewerPrompt.disabled = !selectedDispatch || !results[selectedDispatch.dispatchId];
+  elements.submitProjectReview.disabled = !selectedDispatch || !results[selectedDispatch.dispatchId] || !elements.projectReviewInput.value.trim();
+  elements.buildProjectIntegratorPrompt.disabled = !runtimeSummary?.integrationReady;
+  elements.submitProjectIntegration.disabled = !runtimeSummary?.integrationReady || !elements.projectIntegrationInput.value.trim();
+  elements.approveProjectIntegration.disabled = integration?.pending?.status !== "completed";
+  elements.discardProjectIntegration.disabled = !integration?.pending;
   renderProjectWorkerState(project, tasks, dispatches, runtimeSummary);
 }
 
@@ -312,6 +333,9 @@ async function refreshProjects({ inspectActive = true } = {}) {
     projectState.approvedPlan = null;
     projectState.tasks = {};
     projectState.dispatches = {};
+    projectState.results = {};
+    projectState.reviews = {};
+    projectState.integration = null;
     projectState.runtimeSummary = null;
     renderProjectState();
   }
@@ -325,6 +349,9 @@ async function inspectProject(projectId = elements.projectSelect.value) {
     projectState.approvedPlan = null;
     projectState.tasks = {};
     projectState.dispatches = {};
+    projectState.results = {};
+    projectState.reviews = {};
+    projectState.integration = null;
     projectState.runtimeSummary = null;
     renderProjectState();
     return;
@@ -338,6 +365,9 @@ async function inspectProject(projectId = elements.projectSelect.value) {
   projectState.approvedPlan = response.approvedPlan || null;
   projectState.tasks = response.tasks || {};
   projectState.dispatches = response.dispatches || {};
+  projectState.results = response.results || {};
+  projectState.reviews = response.reviews || {};
+  projectState.integration = response.integration || null;
   projectState.runtimeSummary = response.runtimeSummary || null;
   if (projectState.plannerPromptProjectId && projectState.plannerPromptProjectId !== projectId) {
     elements.plannerPromptOutput.value = "";
@@ -426,6 +456,9 @@ async function discardPendingProjectPlan() {
   projectState.approvedPlan = response.approvedPlan || null;
   projectState.tasks = response.tasks || {};
   projectState.dispatches = response.dispatches || {};
+  projectState.results = response.results || {};
+  projectState.reviews = response.reviews || {};
+  projectState.integration = response.integration || null;
   projectState.runtimeSummary = response.runtimeSummary || null;
   elements.projectMessage.textContent = "Pending plan discarded. No task records were created.";
   await inspectProject(projectId);
@@ -478,6 +511,98 @@ async function transitionProject(type) {
   projectState.project = response.project;
   projectState.activeProjectId = response.activeProjectId || projectId;
   elements.projectMessage.textContent = `${response.project.title} is now ${response.project.status}.`;
+  await inspectProject(projectId);
+}
+
+
+async function dispatchPreparedAssignmentsToWeb() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) throw new Error("Choose a project first.");
+  if (!elements.projectModelVerified.checked) throw new Error("Verify the configured model in every assigned worker chat first.");
+  const preparedIds = Object.values(projectState.dispatches).filter(dispatch => dispatch.status === "prepared").map(dispatch => dispatch.dispatchId);
+  const response = await runtimeMessage("DISPATCH_PROJECT_ASSIGNMENTS", {
+    projectId,
+    dispatchIds: preparedIds,
+    modelVerified: true
+  });
+  if (response.ok === false) throw new Error(response.error || "Could not dispatch Project Mode workers.");
+  elements.projectMessage.textContent = `Opened ${response.started.length} managed worker chat${response.started.length === 1 ? "" : "s"}. Platform restrictions still stop the project.`;
+  elements.projectModelVerified.checked = false;
+  await inspectProject(projectId);
+}
+
+async function submitSelectedProjectResult() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  const dispatchId = elements.projectDispatchSelect.value;
+  if (!projectId || !dispatchId) throw new Error("Choose a project dispatch first.");
+  const output = elements.projectResultInput.value.trim();
+  if (!output) throw new Error("Paste the exact worker result envelope first.");
+  const response = await runtimeMessage("SUBMIT_PROJECT_TASK_RESULT", { projectId, dispatchId, output });
+  if (response.ok === false) throw new Error(response.error || "Worker result validation failed.");
+  elements.projectMessage.textContent = `${response.task.id} result stored with digest ${response.result.resultDigest}; independent review is required.`;
+  elements.projectResultInput.value = "";
+  await inspectProject(projectId);
+}
+
+async function generateSelectedReviewerPrompt() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  const dispatchId = elements.projectDispatchSelect.value;
+  if (!projectId || !dispatchId) throw new Error("Choose a reviewed dispatch first.");
+  const response = await runtimeMessage("BUILD_PROJECT_REVIEWER_PROMPT", { projectId, dispatchId });
+  if (response.ok === false) throw new Error(response.error || "Could not generate reviewer prompt.");
+  elements.projectReviewerPrompt.value = response.prompt;
+  elements.projectMessage.textContent = `Reviewer prompt generated for ${response.task.id}. Copy it to the assigned reviewer chat.`;
+}
+
+async function submitSelectedProjectReview() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  const dispatchId = elements.projectDispatchSelect.value;
+  if (!projectId || !dispatchId) throw new Error("Choose a dispatch first.");
+  const output = elements.projectReviewInput.value.trim();
+  if (!output) throw new Error("Paste the exact reviewer envelope first.");
+  const response = await runtimeMessage("SUBMIT_PROJECT_REVIEW", { projectId, dispatchId, output });
+  if (response.ok === false) throw new Error(response.error || "Reviewer decision validation failed.");
+  elements.projectMessage.textContent = `${response.task.id}: ${response.review.decision}${response.integrationReady ? "; all tasks are ready for integration" : ""}.`;
+  elements.projectReviewInput.value = "";
+  elements.projectReviewerPrompt.value = "";
+  await inspectProject(projectId);
+}
+
+async function generateProjectIntegratorPrompt() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) throw new Error("Choose a project first.");
+  const response = await runtimeMessage("BUILD_PROJECT_INTEGRATOR_PROMPT", { projectId });
+  if (response.ok === false) throw new Error(response.error || "Could not generate integrator prompt.");
+  elements.projectIntegratorPrompt.value = response.prompt;
+  elements.projectMessage.textContent = "Integrator prompt generated. It forbids merging to the default branch or publishing.";
+}
+
+async function submitProjectIntegrationEvidence() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  const output = elements.projectIntegrationInput.value.trim();
+  if (!projectId || !output) throw new Error("Choose a project and paste integration evidence first.");
+  const response = await runtimeMessage("SUBMIT_PROJECT_INTEGRATION", { projectId, output });
+  if (response.ok === false) throw new Error(response.error || "Integration validation failed.");
+  elements.projectMessage.textContent = `${response.integration.pending.status} integration evidence stored; explicit completion approval is still required.`;
+  await inspectProject(projectId);
+}
+
+async function approveProjectCompletion() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) throw new Error("Choose a project first.");
+  const response = await runtimeMessage("APPROVE_PROJECT_INTEGRATION", { projectId });
+  if (response.ok === false) throw new Error(response.error || "Project completion approval failed.");
+  elements.projectMessage.textContent = `${response.project.title} completed at ${response.integration.approved.commit}.`;
+  await inspectProject(projectId);
+}
+
+async function discardProjectIntegrationEvidence() {
+  const projectId = projectState.project?.projectId || elements.projectSelect.value;
+  if (!projectId) throw new Error("Choose a project first.");
+  const response = await runtimeMessage("DISCARD_PROJECT_INTEGRATION", { projectId });
+  if (response.ok === false) throw new Error(response.error || "Could not discard integration evidence.");
+  elements.projectIntegrationInput.value = "";
+  elements.projectMessage.textContent = "Pending integration evidence discarded.";
   await inspectProject(projectId);
 }
 
@@ -823,8 +948,22 @@ elements.startProjectMode.addEventListener("click", () => startProjectModeLocall
 elements.prepareProjectAssignments.addEventListener("click", () => prepareWorkerAssignments().catch(error => { elements.projectMessage.textContent = error.message; }));
 elements.recoverProjectLeases.addEventListener("click", () => recoverExpiredProjectLeases().catch(error => { elements.projectMessage.textContent = error.message; }));
 elements.projectDispatchSelect.addEventListener("change", () => {
-  elements.projectDispatchPrompt.value = projectState.dispatches[elements.projectDispatchSelect.value]?.prompt || "";
+  const dispatchId = elements.projectDispatchSelect.value;
+  elements.projectDispatchPrompt.value = projectState.dispatches[dispatchId]?.prompt || "";
+  const storedResult = projectState.results[dispatchId];
+  if (storedResult) elements.projectResultInput.value = `AUTOPROMPTER_TASK_RESULT_BEGIN\n${JSON.stringify(storedResult, null, 2)}\nAUTOPROMPTER_TASK_RESULT_END`;
+  renderProjectState();
 });
+elements.projectModelVerified.addEventListener("change", renderProjectState);
+elements.dispatchProjectAssignments.addEventListener("click", () => dispatchPreparedAssignmentsToWeb().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.submitProjectResult.addEventListener("click", () => submitSelectedProjectResult().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.buildProjectReviewerPrompt.addEventListener("click", () => generateSelectedReviewerPrompt().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.submitProjectReview.addEventListener("click", () => submitSelectedProjectReview().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.buildProjectIntegratorPrompt.addEventListener("click", () => generateProjectIntegratorPrompt().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.submitProjectIntegration.addEventListener("click", () => submitProjectIntegrationEvidence().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.approveProjectIntegration.addEventListener("click", () => approveProjectCompletion().catch(error => { elements.projectMessage.textContent = error.message; }));
+elements.discardProjectIntegration.addEventListener("click", () => discardProjectIntegrationEvidence().catch(error => { elements.projectMessage.textContent = error.message; }));
+for (const input of [elements.projectResultInput, elements.projectReviewInput, elements.projectIntegrationInput]) input.addEventListener("input", renderProjectState);
 elements.plannerResponseInput.addEventListener("input", renderProjectState);
 for (const select of projectRoleSelects()) select.addEventListener("change", updateProjectWorkerHint);
 for (const input of [elements.prompt, elements.delaySeconds, elements.maxContinuations, elements.notifyOnPromptDone, elements.repository, elements.handoffFile, elements.pluginInstruction, elements.contextCapacityTokens, elements.contextThresholdPercent, elements.stallMinutes, elements.maxRollovers, elements.checkpointBeforePrompt, elements.checkpointAfterPrompt]) input.addEventListener("change", () => saveSettings().catch(() => {}));

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/OssaBellator/autoprompter/schemas/review.schema.json",
+  "title": "AutoPrompter Task Review",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "projectId", "taskId", "dispatchId", "attempt", "resultDigest", "decision", "summary", "acceptanceCriteria", "verificationChecks", "requiredChanges", "risks", "reviewedAt"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "projectId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$" },
+    "taskId": { "type": "string", "pattern": "^task-[a-z0-9._-]+$" },
+    "dispatchId": { "type": "string", "pattern": "^dispatch-[a-z0-9._-]+$", "maxLength": 200 },
+    "attempt": { "type": "integer", "minimum": 1, "maximum": 50 },
+    "resultDigest": { "type": "string", "pattern": "^[a-z0-9]{7}$" },
+    "decision": { "enum": ["accepted", "revision_required", "rejected"] },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 12000 },
+    "acceptanceCriteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterion", "status", "evidence"],
+        "properties": {
+          "criterion": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "status": { "enum": ["met", "not_met", "unclear"] },
+          "evidence": { "type": "string", "minLength": 1, "maxLength": 4000 }
+        }
+      }
+    },
+    "verificationChecks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "status", "evidence"],
+        "properties": {
+          "command": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "status": { "enum": ["verified", "failed", "not_verified"] },
+          "evidence": { "type": "string", "minLength": 1, "maxLength": 4000 }
+        }
+      }
+    },
+    "requiredChanges": { "type": "array", "maxItems": 30, "items": { "type": "string", "minLength": 1, "maxLength": 2000 } },
+    "risks": { "type": "array", "maxItems": 50, "items": { "type": "string", "minLength": 1, "maxLength": 2000 } },
+    "reviewedAt": { "type": "string", "format": "date-time" }
+  }
+}

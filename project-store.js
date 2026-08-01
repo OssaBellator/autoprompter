@@ -5,12 +5,18 @@
     || (typeof require === "function" ? require("./planner-protocol.js") : null);
   const workerProtocol = root.AutoPrompterWorkerProtocol
     || (typeof require === "function" ? require("./worker-protocol.js") : null);
-  const api = factory(plannerProtocol, workerProtocol);
+  const resultProtocol = root.AutoPrompterResultProtocol
+    || (typeof require === "function" ? require("./result-protocol.js") : null);
+  const reviewerProtocol = root.AutoPrompterReviewerProtocol
+    || (typeof require === "function" ? require("./reviewer-protocol.js") : null);
+  const integrationProtocol = root.AutoPrompterIntegrationProtocol
+    || (typeof require === "function" ? require("./integration-protocol.js") : null);
+  const api = factory(plannerProtocol, workerProtocol, resultProtocol, reviewerProtocol, integrationProtocol);
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.AutoPrompterProjectStore = api;
-})(typeof globalThis !== "undefined" ? globalThis : self, (PlannerProtocol, WorkerProtocol) => {
+})(typeof globalThis !== "undefined" ? globalThis : self, (PlannerProtocol, WorkerProtocol, ResultProtocol, ReviewerProtocol, IntegrationProtocol) => {
   const PROJECTS_KEY = "autoprompterProjects";
-  const STORE_SCHEMA_VERSION = "1.2";
+  const STORE_SCHEMA_VERSION = "1.4";
   const PROJECT_SCHEMA_VERSION = "1.0";
   const MAX_PROJECT_EVENTS = 200;
   const ACTIVE_STATUSES = new Set(["draft", "planning", "ready", "running"]);
@@ -99,6 +105,9 @@
       approvedPlansByProject: {},
       tasksByProject: {},
       dispatchesByProject: {},
+      resultsByProject: {},
+      reviewsByProject: {},
+      integrationsByProject: {},
       events: []
     };
   }
@@ -156,7 +165,7 @@
 
   function migrateStore(raw) {
     if (!raw) return { store: emptyStore(), migrated: true };
-    if ([STORE_SCHEMA_VERSION, "1.1", "1.0"].includes(raw.schemaVersion) && raw.projects && !Array.isArray(raw.projects)) {
+    if ([STORE_SCHEMA_VERSION, "1.3", "1.2", "1.1", "1.0"].includes(raw.schemaVersion) && raw.projects && !Array.isArray(raw.projects)) {
       const store = emptyStore();
       for (const [id, project] of Object.entries(raw.projects)) {
         const normalized = normalizeStoredProject(project);
@@ -166,7 +175,7 @@
       store.resumeStatusByProject = raw.resumeStatusByProject && typeof raw.resumeStatusByProject === "object"
         ? Object.fromEntries(Object.entries(raw.resumeStatusByProject).filter(([id, status]) => store.projects[id] && ACTIVE_STATUSES.has(status)))
         : {};
-      if ([STORE_SCHEMA_VERSION, "1.1"].includes(raw.schemaVersion) && PlannerProtocol) {
+      if ([STORE_SCHEMA_VERSION, "1.3", "1.2", "1.1"].includes(raw.schemaVersion) && PlannerProtocol) {
         for (const [projectId, plan] of Object.entries(raw.pendingPlansByProject || {})) {
           const project = store.projects[projectId];
           if (!project) continue;
@@ -180,11 +189,22 @@
         for (const [projectId, tasks] of Object.entries(raw.tasksByProject || {})) {
           if (store.projects[projectId] && tasks && typeof tasks === "object" && !Array.isArray(tasks)) store.tasksByProject[projectId] = clone(tasks);
         }
-        if (raw.schemaVersion === STORE_SCHEMA_VERSION) {
+        if ([STORE_SCHEMA_VERSION, "1.3", "1.2"].includes(raw.schemaVersion)) {
           for (const [projectId, dispatches] of Object.entries(raw.dispatchesByProject || {})) {
             if (store.projects[projectId] && dispatches && typeof dispatches === "object" && !Array.isArray(dispatches)) {
               store.dispatchesByProject[projectId] = clone(dispatches);
             }
+          }
+        }
+        if ([STORE_SCHEMA_VERSION, "1.3"].includes(raw.schemaVersion)) {
+          for (const [projectId, results] of Object.entries(raw.resultsByProject || {})) {
+            if (store.projects[projectId] && results && typeof results === "object" && !Array.isArray(results)) store.resultsByProject[projectId] = clone(results);
+          }
+          for (const [projectId, reviews] of Object.entries(raw.reviewsByProject || {})) {
+            if (store.projects[projectId] && reviews && typeof reviews === "object" && !Array.isArray(reviews)) store.reviewsByProject[projectId] = clone(reviews);
+          }
+          for (const [projectId, integration] of Object.entries(raw.integrationsByProject || {})) {
+            if (store.projects[projectId] && integration && typeof integration === "object" && !Array.isArray(integration)) store.integrationsByProject[projectId] = clone(integration);
           }
         }
       }
@@ -279,6 +299,21 @@
     return WorkerProtocol;
   }
 
+  function requireResultProtocol() {
+    if (!ResultProtocol) throw new Error("Result protocol is unavailable.");
+    return ResultProtocol;
+  }
+
+  function requireReviewerProtocol() {
+    if (!ReviewerProtocol) throw new Error("Reviewer protocol is unavailable.");
+    return ReviewerProtocol;
+  }
+
+  function requireIntegrationProtocol() {
+    if (!IntegrationProtocol) throw new Error("Integration protocol is unavailable.");
+    return IntegrationProtocol;
+  }
+
   function taskDependenciesAccepted(tasks, task) {
     return task.dependencies.every(dependencyId => tasks[dependencyId]?.status === "accepted");
   }
@@ -306,6 +341,28 @@
 
   function activeDispatchesForProject(store, projectId) {
     return requireWorkerProtocol().activeDispatches(store.dispatchesByProject[projectId] || {});
+  }
+
+  function summarizeProjectRuntime(store, projectId) {
+    const project = store.projects[projectId];
+    const tasks = store.tasksByProject[projectId] || {};
+    const dispatches = store.dispatchesByProject[projectId] || {};
+    const results = store.resultsByProject[projectId] || {};
+    const reviews = store.reviewsByProject[projectId] || {};
+    const integration = store.integrationsByProject[projectId] || null;
+    const base = requireWorkerProtocol().summarizeRuntime(project, tasks, dispatches);
+    const taskValues = Object.values(tasks);
+    return {
+      ...base,
+      resultCount: Object.keys(results).length,
+      reviewCount: Object.keys(reviews).length,
+      acceptedTaskCount: taskValues.filter(task => task.status === "accepted").length,
+      reviewTaskCount: taskValues.filter(task => task.status === "review").length,
+      revisionTaskCount: taskValues.filter(task => Array.isArray(task.requiredChanges) && task.requiredChanges.length).length,
+      integrationReady: taskValues.length > 0 && taskValues.every(task => task.status === "accepted"),
+      pendingIntegration: Boolean(integration?.pending),
+      approvedIntegration: Boolean(integration?.approved)
+    };
   }
 
   function reconcileProjectRuntimeMutable(store, projectId, clock = Date.now) {
@@ -475,7 +532,7 @@
       tasks: clone(tasks),
       dispatches: clone(dispatches),
       assignments,
-      runtimeSummary: workerProtocol.summarizeRuntime(project, tasks, dispatches)
+      runtimeSummary: summarizeProjectRuntime(store, id)
     };
   }
 
@@ -491,8 +548,282 @@
       dispatches: clone(store.dispatchesByProject[id] || {}),
       expiredDispatchIds: result.expiredDispatchIds,
       unlockedTaskIds: result.unlockedTaskIds,
-      runtimeSummary: requireWorkerProtocol().summarizeRuntime(project, store.tasksByProject[id] || {}, store.dispatchesByProject[id] || {})
+      runtimeSummary: summarizeProjectRuntime(store, id)
     };
+  }
+
+
+  function submitProjectTaskResult(storeInput, projectId, dispatchId, output, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    if (project.status !== "running") throw new Error("Task results can be submitted only while the project is running.");
+    const dispatches = store.dispatchesByProject[id] || {};
+    const tasks = store.tasksByProject[id] || {};
+    const dispatch = dispatches[dispatchId];
+    if (!dispatch) throw new Error("Prepared dispatch not found.");
+    if (!["prepared", "dispatched", "running", "review"].includes(dispatch.status)) throw new Error(`Cannot submit a result for a ${dispatch.status} dispatch.`);
+    const task = tasks[dispatch.taskId];
+    if (!task) throw new Error("Dispatch task not found.");
+    const result = requireResultProtocol().parseAndValidateResult(output, { project, task, dispatch });
+    const results = store.resultsByProject[id] || {};
+    if (results[dispatchId]) {
+      if (results[dispatchId].resultDigest !== result.resultDigest) throw new Error("A conflicting result already exists for this dispatch.");
+      return {
+        store,
+        project: clone(project),
+        task: clone(task),
+        dispatch: clone(dispatch),
+        result: clone(results[dispatchId]),
+        runtimeSummary: summarizeProjectRuntime(store, id)
+      };
+    }
+    const at = nowIso(clock);
+    results[dispatchId] = result;
+    store.resultsByProject[id] = results;
+    dispatch.status = "review";
+    dispatch.resultDigest = result.resultDigest;
+    dispatch.resultReceivedAt = at;
+    dispatch.workerTabId = null;
+    dispatch.updatedAt = at;
+    task.status = "review";
+    task.lease = null;
+    task.lastResultDispatchId = dispatchId;
+    task.resultCommit = result.commit;
+    task.updatedAt = at;
+    project.updatedAt = at;
+    appendEvent(store, "worker_result_received", id, at, `${dispatchId} produced ${result.status}; reviewer decision required`);
+    return {
+      store,
+      project: clone(project),
+      task: clone(task),
+      dispatch: clone(dispatch),
+      result: clone(result),
+      runtimeSummary: summarizeProjectRuntime(store, id)
+    };
+  }
+
+  function buildProjectReviewerPrompt(storeInput, projectId, dispatchId) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const dispatch = store.dispatchesByProject[id]?.[dispatchId];
+    const task = dispatch && store.tasksByProject[id]?.[dispatch.taskId];
+    const result = store.resultsByProject[id]?.[dispatchId];
+    if (!dispatch || !task || !result) throw new Error("A stored worker result is required before review.");
+    return {
+      store,
+      project: clone(project),
+      task: clone(task),
+      dispatch: clone(dispatch),
+      result: clone(result),
+      prompt: requireReviewerProtocol().buildReviewerPrompt(project, task, dispatch, result)
+    };
+  }
+
+  function submitProjectReview(storeInput, projectId, dispatchId, output, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    if (project.status !== "running") throw new Error("Reviews can be submitted only while the project is running.");
+    const dispatches = store.dispatchesByProject[id] || {};
+    const tasks = store.tasksByProject[id] || {};
+    const dispatch = dispatches[dispatchId];
+    const task = dispatch && tasks[dispatch.taskId];
+    const result = store.resultsByProject[id]?.[dispatchId];
+    if (!dispatch || !task || !result) throw new Error("A stored worker result is required before review.");
+    if (task.status !== "review") throw new Error(`Cannot review a task in ${task.status} state.`);
+    const review = requireReviewerProtocol().parseAndValidateReview(output, { project, task, dispatch, result });
+    const reviews = store.reviewsByProject[id] || {};
+    if (reviews[dispatchId]) {
+      if (JSON.stringify(reviews[dispatchId]) !== JSON.stringify(review)) throw new Error("A conflicting review already exists for this dispatch.");
+      return {
+        store,
+        project: clone(project),
+        task: clone(task),
+        dispatch: clone(dispatch),
+        review: clone(review),
+        integrationReady: summarizeProjectRuntime(store, id).integrationReady,
+        runtimeSummary: summarizeProjectRuntime(store, id)
+      };
+    }
+    const at = nowIso(clock);
+    reviews[dispatchId] = review;
+    store.reviewsByProject[id] = reviews;
+    task.lastReviewDispatchId = dispatchId;
+    task.lease = null;
+    dispatch.reviewedAt = at;
+    dispatch.reviewDecision = review.decision;
+    dispatch.workerTabId = null;
+    dispatch.updatedAt = at;
+
+    if (review.decision === "accepted") {
+      task.status = "accepted";
+      task.requiredChanges = [];
+      task.acceptedDispatchId = dispatchId;
+      task.acceptedBranch = dispatch.branch;
+      task.acceptedCommit = result.commit;
+      dispatch.status = "accepted";
+      const unlocked = reconcileTaskReadiness(tasks, at);
+      if (unlocked.length) appendEvent(store, "tasks_unblocked", id, at, `Ready tasks: ${unlocked.join(", ")}`);
+      appendEvent(store, "task_accepted", id, at, `${task.id} accepted from ${dispatchId}`);
+    } else if (review.decision === "revision_required") {
+      const maxAttempts = 1 + Number(project.scheduler.revisionLimit || 0);
+      if (Number(task.attempt || 0) >= maxAttempts) {
+        task.status = "failed";
+        task.requiredChanges = clone(review.requiredChanges);
+        dispatch.status = "rejected";
+        project.status = "failed";
+        appendEvent(store, "revision_limit_exhausted", id, at, `${task.id} exceeded ${project.scheduler.revisionLimit} allowed revisions`);
+      } else {
+        task.status = taskDependenciesAccepted(tasks, task) ? "ready" : "blocked";
+        task.branch = null;
+        task.requiredChanges = clone(review.requiredChanges);
+        dispatch.status = "revision_required";
+        appendEvent(store, "task_revision_required", id, at, `${task.id}: ${review.requiredChanges.join("; ")}`);
+      }
+    } else {
+      task.status = "failed";
+      task.requiredChanges = clone(review.requiredChanges);
+      dispatch.status = "rejected";
+      project.status = "failed";
+      appendEvent(store, "task_rejected", id, at, `${task.id} was rejected by the reviewer`);
+    }
+
+    task.updatedAt = at;
+    project.updatedAt = at;
+    store.tasksByProject[id] = tasks;
+    store.dispatchesByProject[id] = dispatches;
+    const runtimeSummary = summarizeProjectRuntime(store, id);
+    if (runtimeSummary.integrationReady) appendEvent(store, "integration_ready", id, at, "Every task is accepted; integrator evidence can be prepared");
+    return {
+      store,
+      project: clone(project),
+      task: clone(task),
+      dispatch: clone(dispatch),
+      review: clone(review),
+      integrationReady: runtimeSummary.integrationReady,
+      runtimeSummary
+    };
+  }
+
+  function buildProjectIntegratorPrompt(storeInput, projectId) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const plan = store.approvedPlansByProject[id];
+    const tasks = store.tasksByProject[id] || {};
+    if (!plan || !Object.keys(tasks).length || !Object.values(tasks).every(task => task.status === "accepted")) {
+      throw new Error("Every approved task must be accepted before integration.");
+    }
+    return {
+      store,
+      project: clone(project),
+      prompt: requireIntegrationProtocol().buildIntegratorPrompt(
+        project,
+        plan,
+        tasks,
+        store.resultsByProject[id] || {},
+        store.reviewsByProject[id] || {}
+      )
+    };
+  }
+
+  function submitProjectIntegrationOutput(storeInput, projectId, output, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    if (project.status !== "running") throw new Error("Integration evidence can be submitted only while the project is running.");
+    const plan = store.approvedPlansByProject[id];
+    const tasks = store.tasksByProject[id] || {};
+    if (!plan || !Object.keys(tasks).length || !Object.values(tasks).every(task => task.status === "accepted")) {
+      throw new Error("Every approved task must be accepted before integration.");
+    }
+    const result = requireIntegrationProtocol().parseAndValidateIntegration(output, { project, plan, tasks });
+    const at = nowIso(clock);
+    store.integrationsByProject[id] = { pending: result, approved: null, submittedAt: at };
+    project.updatedAt = at;
+    appendEvent(store, "integration_validated", id, at, `${result.status} integration evidence stored; explicit approval required`);
+    return { store, project: clone(project), integration: clone(store.integrationsByProject[id]), runtimeSummary: summarizeProjectRuntime(store, id) };
+  }
+
+  function approveProjectIntegration(storeInput, projectId, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const record = store.integrationsByProject[id];
+    if (!record?.pending) throw new Error("No validated integration result is awaiting approval.");
+    if (record.pending.status !== "completed") throw new Error("Only completed integration evidence can finish a project.");
+    const at = nowIso(clock);
+    record.approved = record.pending;
+    record.pending = null;
+    record.approvedAt = at;
+    project.status = "completed";
+    project.updatedAt = at;
+    appendEvent(store, "integration_approved", id, at, `Project completed at ${record.approved.commit}`);
+    return { store, project: clone(project), integration: clone(record), runtimeSummary: summarizeProjectRuntime(store, id) };
+  }
+
+  function discardProjectIntegration(storeInput, projectId, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const record = store.integrationsByProject[id];
+    if (!record?.pending) throw new Error("No pending integration result is available to discard.");
+    record.pending = null;
+    record.discardedAt = nowIso(clock);
+    project.updatedAt = record.discardedAt;
+    appendEvent(store, "integration_discarded", id, record.discardedAt, "Pending integration evidence discarded before approval");
+    return { store, project: clone(project), integration: clone(record), runtimeSummary: summarizeProjectRuntime(store, id) };
+  }
+
+  function markProjectDispatchStarted(storeInput, projectId, dispatchId, tabId, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    if (project.status !== "running") throw new Error("Project must be running before web dispatch.");
+    if (!Number.isInteger(tabId)) throw new Error("A managed worker tab ID is required.");
+    const dispatch = store.dispatchesByProject[id]?.[dispatchId];
+    const task = dispatch && store.tasksByProject[id]?.[dispatch.taskId];
+    if (!dispatch || !task) throw new Error("Prepared dispatch not found.");
+    if (dispatch.status !== "prepared") throw new Error(`Only prepared dispatches can be sent; ${dispatchId} is ${dispatch.status}.`);
+    if (task.lease?.dispatchId !== dispatchId) throw new Error("Task lease no longer matches the prepared dispatch.");
+    const at = nowIso(clock);
+    dispatch.status = "dispatched";
+    dispatch.workerTabId = tabId;
+    dispatch.dispatchedAt = at;
+    dispatch.lastStatus = "Opening assigned ChatGPT worker chat";
+    dispatch.updatedAt = at;
+    task.status = "running";
+    task.updatedAt = at;
+    project.updatedAt = at;
+    appendEvent(store, "worker_dispatch_started", id, at, `${dispatchId} opened managed tab ${tabId}`);
+    return { store, project: clone(project), task: clone(task), dispatch: clone(dispatch), runtimeSummary: summarizeProjectRuntime(store, id) };
+  }
+
+  function updateProjectDispatchStatus(storeInput, projectId, dispatchId, status, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const dispatch = store.dispatchesByProject[id]?.[dispatchId];
+    if (!dispatch) throw new Error("Project dispatch not found.");
+    const at = nowIso(clock);
+    if (dispatch.status === "dispatched") dispatch.status = "running";
+    dispatch.lastStatus = String(status || "Working").slice(0, 500);
+    dispatch.updatedAt = at;
+    project.updatedAt = at;
+    return { store, project: clone(project), dispatch: clone(dispatch), runtimeSummary: summarizeProjectRuntime(store, id) };
+  }
+
+  function markProjectDispatchTransportError(storeInput, projectId, dispatchId, error, clock = Date.now) {
+    const store = clone(storeInput);
+    const { id, project } = selectedProject(store, projectId);
+    const dispatch = store.dispatchesByProject[id]?.[dispatchId];
+    const task = dispatch && store.tasksByProject[id]?.[dispatch.taskId];
+    if (!dispatch || !task) throw new Error("Project dispatch not found.");
+    const at = nowIso(clock);
+    dispatch.status = "transport_failed";
+    dispatch.lastError = String(error || "Web dispatch failed").slice(0, 1000);
+    dispatch.workerTabId = null;
+    dispatch.updatedAt = at;
+    task.lease = null;
+    task.branch = null;
+    task.status = taskDependenciesAccepted(store.tasksByProject[id] || {}, task) ? "ready" : "blocked";
+    task.updatedAt = at;
+    project.updatedAt = at;
+    appendEvent(store, "worker_dispatch_transport_failed", id, at, `${dispatchId}: ${dispatch.lastError}`);
+    return { store, project: clone(project), task: clone(task), dispatch: clone(dispatch), runtimeSummary: summarizeProjectRuntime(store, id) };
   }
 
   function selectedProject(store, projectId = "") {
@@ -588,7 +919,10 @@
       approvedPlan: clone(store.approvedPlansByProject[id] || null),
       tasks: clone(store.tasksByProject[id] || {}),
       dispatches: clone(store.dispatchesByProject[id] || {}),
-      runtimeSummary: requireWorkerProtocol().summarizeRuntime(project, store.tasksByProject[id] || {}, store.dispatchesByProject[id] || {})
+      results: clone(store.resultsByProject[id] || {}),
+      reviews: clone(store.reviewsByProject[id] || {}),
+      integration: clone(store.integrationsByProject[id] || null),
+      runtimeSummary: summarizeProjectRuntime(store, id)
     };
   }
 
@@ -621,6 +955,7 @@
       for (const dispatch of Object.values(dispatches)) {
         if (requireWorkerProtocol().ACTIVE_DISPATCH_STATUSES.includes(dispatch.status)) {
           dispatch.status = "cancelled";
+          dispatch.workerTabId = null;
           dispatch.updatedAt = at;
         }
       }
@@ -667,6 +1002,17 @@
     startProject,
     prepareProjectDispatches,
     recoverProjectLeases,
-    activeDispatchesForProject
+    activeDispatchesForProject,
+    summarizeProjectRuntime,
+    submitProjectTaskResult,
+    buildProjectReviewerPrompt,
+    submitProjectReview,
+    buildProjectIntegratorPrompt,
+    submitProjectIntegrationOutput,
+    approveProjectIntegration,
+    discardProjectIntegration,
+    markProjectDispatchStarted,
+    updateProjectDispatchStatus,
+    markProjectDispatchTransportError
   };
 });

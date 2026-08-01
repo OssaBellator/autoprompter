@@ -88,6 +88,11 @@
       "Verification commands",
       commands,
       "",
+      "Revision requirements",
+      ...(Array.isArray(task.requiredChanges) && task.requiredChanges.length
+        ? task.requiredChanges.map(change => `- ${change}`)
+        : ["- None; this is the first attempt or no reviewer changes are pending."]),
+      "",
       "Rules",
       "- Read the repository and continuity file before changing anything.",
       "- Work only on this task and the allowlisted paths.",

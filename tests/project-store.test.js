@@ -153,7 +153,7 @@ function plannerEnvelope(projectId, overrides = {}) {
   return `${PLAN_BEGIN}\n${JSON.stringify(plannerPlan(projectId, overrides))}\n${PLAN_END}`;
 }
 
-test("migrates older project stores to lease-capable schema 1.2", () => {
+test("migrates older project stores to result-and-integration-capable schema 1.4", () => {
   const created = createProject(emptyStore(), validInput(), fixedClock);
   const migrated = migrateStore({
     schemaVersion: "1.0",
@@ -162,11 +162,14 @@ test("migrates older project stores to lease-capable schema 1.2", () => {
     resumeStatusByProject: {},
     events: created.store.events
   });
-  assert.equal(migrated.store.schemaVersion, "1.2");
+  assert.equal(migrated.store.schemaVersion, "1.4");
   assert.deepEqual(migrated.store.pendingPlansByProject, {});
   assert.deepEqual(migrated.store.approvedPlansByProject, {});
   assert.deepEqual(migrated.store.tasksByProject, {});
   assert.deepEqual(migrated.store.dispatchesByProject, {});
+  assert.deepEqual(migrated.store.resultsByProject, {});
+  assert.deepEqual(migrated.store.reviewsByProject, {});
+  assert.deepEqual(migrated.store.integrationsByProject, {});
 });
 
 test("planner output remains pending until explicit approval creates tasks", () => {

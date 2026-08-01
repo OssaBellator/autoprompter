@@ -1,8 +1,11 @@
 "use strict";
 
-if (typeof importScripts === "function") importScripts("planner-protocol.js", "worker-protocol.js", "project-store.js");
+if (typeof importScripts === "function") importScripts("planner-protocol.js", "worker-protocol.js", "result-protocol.js", "reviewer-protocol.js", "integration-protocol.js", "project-store.js");
 const PlannerProtocol = globalThis.AutoPrompterPlannerProtocol || (typeof require === "function" ? require("./planner-protocol.js") : null);
 const WorkerProtocol = globalThis.AutoPrompterWorkerProtocol || (typeof require === "function" ? require("./worker-protocol.js") : null);
+const ResultProtocol = globalThis.AutoPrompterResultProtocol || (typeof require === "function" ? require("./result-protocol.js") : null);
+const ReviewerProtocol = globalThis.AutoPrompterReviewerProtocol || (typeof require === "function" ? require("./reviewer-protocol.js") : null);
+const IntegrationProtocol = globalThis.AutoPrompterIntegrationProtocol || (typeof require === "function" ? require("./integration-protocol.js") : null);
 const ProjectStore = globalThis.AutoPrompterProjectStore || (typeof require === "function" ? require("./project-store.js") : null);
 
 const MESSAGE_SCOPE = "AUTOPROMPTER_RUNTIME";
@@ -346,14 +349,21 @@ async function inspectProjectState(projectId) {
     approvedPlan: result.approvedPlan,
     tasks: result.tasks,
     dispatches: result.dispatches,
+    results: result.results,
+    reviews: result.reviews,
+    integration: result.integration,
     runtimeSummary: result.runtimeSummary
   };
 }
 
 async function transitionProjectState(projectId, action) {
   const store = await loadProjectStore();
+  const tabIds = action === "cancel"
+    ? Object.values(store.dispatchesByProject[projectId] || {}).map(dispatch => dispatch.workerTabId).filter(Number.isInteger)
+    : [];
   const result = ProjectStore.transitionProject(store, projectId, action);
   await saveProjectStore(result.store);
+  if (tabIds.length) await removeManagedTabs(tabIds);
   return {
     projectStoreVersion: result.store.schemaVersion,
     activeProjectId: result.store.activeProjectId,
@@ -467,6 +477,176 @@ async function recoverProjectLeasesState(projectId) {
     unlockedTaskIds: result.unlockedTaskIds,
     runtimeSummary: result.runtimeSummary
   };
+}
+
+
+async function submitProjectTaskResultState(projectId, dispatchId, output) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.submitProjectTaskResult(store, projectId, dispatchId, output);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    task: result.task,
+    dispatch: result.dispatch,
+    result: result.result,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
+async function buildProjectReviewerPromptState(projectId, dispatchId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.buildProjectReviewerPrompt(store, projectId, dispatchId);
+  return { project: result.project, task: result.task, dispatch: result.dispatch, result: result.result, prompt: result.prompt };
+}
+
+async function submitProjectReviewState(projectId, dispatchId, output) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.submitProjectReview(store, projectId, dispatchId, output);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    task: result.task,
+    dispatch: result.dispatch,
+    review: result.review,
+    integrationReady: result.integrationReady,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
+async function buildProjectIntegratorPromptState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.buildProjectIntegratorPrompt(store, projectId);
+  return { project: result.project, prompt: result.prompt };
+}
+
+async function submitProjectIntegrationState(projectId, output) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.submitProjectIntegrationOutput(store, projectId, output);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    integration: result.integration,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
+async function approveProjectIntegrationState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.approveProjectIntegration(store, projectId);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    integration: result.integration,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
+async function discardProjectIntegrationState(projectId) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.discardProjectIntegration(store, projectId);
+  await saveProjectStore(result.store);
+  return {
+    projectStoreVersion: result.store.schemaVersion,
+    activeProjectId: result.store.activeProjectId,
+    projects: ProjectStore.listProjects(result.store),
+    project: result.project,
+    integration: result.integration,
+    runtimeSummary: result.runtimeSummary
+  };
+}
+
+function findProjectDispatchByTab(store, tabId) {
+  for (const [projectId, dispatches] of Object.entries(store.dispatchesByProject || {})) {
+    for (const dispatch of Object.values(dispatches || {})) {
+      if (dispatch?.workerTabId === tabId && ["dispatched", "running"].includes(dispatch.status)) return { projectId, dispatch };
+    }
+  }
+  return null;
+}
+
+async function dispatchPreparedProjectAssignmentsState(projectId, dispatchIds, modelVerified) {
+  if (modelVerified !== true) throw new Error("Verify the configured ChatGPT model in every worker chat before dispatching.");
+  const scheduler = await loadState();
+  if (scheduler?.running) throw new Error("Stop the normal AutoPrompter scheduler before dispatching Project Mode workers.");
+  let store = await loadProjectStore();
+  const project = store.projects[projectId];
+  if (!project || project.status !== "running") throw new Error("Project must be running before web dispatch.");
+  const wanted = new Set(Array.isArray(dispatchIds) ? dispatchIds : []);
+  const prepared = Object.values(store.dispatchesByProject[projectId] || {})
+    .filter(dispatch => dispatch.status === "prepared" && (!wanted.size || wanted.has(dispatch.dispatchId)));
+  if (!prepared.length) throw new Error("No prepared assignments are available for web dispatch.");
+  const stored = await chrome.storage.local.get([CATALOG_KEY, SETTINGS_KEY]);
+  const catalog = Array.isArray(stored[CATALOG_KEY]) ? stored[CATALOG_KEY] : [];
+  const byId = new Map(catalog.map(chat => [chat.id, chat]));
+  const settings = normalizeSettings({ ...(stored[SETTINGS_KEY] || {}), continuityEnabled: false, delaySeconds: 5 });
+  const started = [];
+  for (const dispatch of prepared) {
+    const chat = byId.get(dispatch.workerChatId);
+    if (!chat?.url) throw new Error(`Worker chat ${dispatch.workerChatId} is missing from the local catalog. Refresh the ChatGPT sidebar first.`);
+    const tab = await chrome.tabs.create({ url: chat.url, active: false });
+    try {
+      const marked = ProjectStore.markProjectDispatchStarted(store, projectId, dispatch.dispatchId, tab.id);
+      store = marked.store;
+      await saveProjectStore(store);
+      started.push(marked.dispatch);
+    } catch (error) {
+      await removeManagedTab(tab.id);
+      throw error;
+    }
+  }
+  return {
+    projectStoreVersion: store.schemaVersion,
+    activeProjectId: store.activeProjectId,
+    projects: ProjectStore.listProjects(store),
+    project: store.projects[projectId],
+    started,
+    runtimeSummary: ProjectStore.summarizeProjectRuntime(store, projectId)
+  };
+}
+
+async function handleProjectTaskStatus(message) {
+  const store = await loadProjectStore();
+  const result = ProjectStore.updateProjectDispatchStatus(store, message.projectId, message.dispatchId, message.status);
+  await saveProjectStore(result.store);
+  return { ok: true };
+}
+
+async function handleProjectTaskResult(message, sender) {
+  const result = await submitProjectTaskResultState(message.projectId, message.dispatchId, message.output);
+  await removeManagedTab(sender?.tab?.id || result.dispatch.workerTabId);
+  return result;
+}
+
+async function failProjectDispatch(message, sender) {
+  let store = await loadProjectStore();
+  const failed = ProjectStore.markProjectDispatchTransportError(store, message.projectId, message.dispatchId, message.error || message.kind || "Project worker failed");
+  store = failed.store;
+  if (["rate_limit", "account_restriction", "safety_restriction"].includes(message.kind) && store.projects[message.projectId]?.status === "running") {
+    const activeTabs = Object.values(store.dispatchesByProject[message.projectId] || {}).map(dispatch => dispatch.workerTabId).filter(Number.isInteger);
+    for (const dispatch of Object.values(store.dispatchesByProject[message.projectId] || {})) {
+      if (["dispatched", "running"].includes(dispatch.status)) {
+        store = ProjectStore.markProjectDispatchTransportError(store, message.projectId, dispatch.dispatchId, message.error || message.kind).store;
+      }
+    }
+    store = ProjectStore.transitionProject(store, message.projectId, "pause").store;
+    await removeManagedTabs(activeTabs);
+  } else {
+    await removeManagedTab(sender?.tab?.id);
+  }
+  await saveProjectStore(store);
+  return { ok: true };
 }
 
 async function notify(state, title, message, idSuffix = "event") {
@@ -1231,7 +1411,57 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return prepareProjectAssignmentsState(message.projectId);
       case "RECOVER_PROJECT_LEASES":
         return recoverProjectLeasesState(message.projectId);
+      case "SUBMIT_PROJECT_TASK_RESULT":
+        return submitProjectTaskResultState(message.projectId, message.dispatchId, message.output);
+      case "BUILD_PROJECT_REVIEWER_PROMPT":
+        return buildProjectReviewerPromptState(message.projectId, message.dispatchId);
+      case "SUBMIT_PROJECT_REVIEW":
+        return submitProjectReviewState(message.projectId, message.dispatchId, message.output);
+      case "BUILD_PROJECT_INTEGRATOR_PROMPT":
+        return buildProjectIntegratorPromptState(message.projectId);
+      case "SUBMIT_PROJECT_INTEGRATION":
+        return submitProjectIntegrationState(message.projectId, message.output);
+      case "APPROVE_PROJECT_INTEGRATION":
+        return approveProjectIntegrationState(message.projectId);
+      case "DISCARD_PROJECT_INTEGRATION":
+        return discardProjectIntegrationState(message.projectId);
+      case "DISPATCH_PROJECT_ASSIGNMENTS":
+        return dispatchPreparedProjectAssignmentsState(message.projectId, message.dispatchIds, message.modelVerified);
+      case "PROJECT_TASK_STATUS":
+        return handleProjectTaskStatus(message);
+      case "PROJECT_TASK_RESULT":
+        return handleProjectTaskResult(message, sender);
+      case "PROJECT_TASK_INTERRUPTED":
+      case "PROJECT_TASK_ERROR":
+        return failProjectDispatch(message, sender);
       case "CONTENT_READY": {
+        const projectStore = await loadProjectStore();
+        const projectWorker = findProjectDispatchByTab(projectStore, sender.tab?.id);
+        if (projectWorker) {
+          const project = projectStore.projects[projectWorker.projectId];
+          const conversationId = message.conversation?.id;
+          if (conversationId !== projectWorker.dispatch.workerChatId) {
+            await failProjectDispatch({
+              projectId: projectWorker.projectId,
+              dispatchId: projectWorker.dispatch.dispatchId,
+              error: "The managed tab opened a different worker conversation."
+            }, sender);
+            return { ok: false };
+          }
+          const stored = await chrome.storage.local.get(SETTINGS_KEY);
+          const settings = normalizeSettings({ ...(stored[SETTINGS_KEY] || {}), continuityEnabled: false, delaySeconds: 5 });
+          await chrome.tabs.sendMessage(sender.tab.id, {
+            type: "RUN_PROJECT_TASK",
+            jobId: projectWorker.dispatch.dispatchId,
+            projectId: projectWorker.projectId,
+            dispatchId: projectWorker.dispatch.dispatchId,
+            workerChatId: projectWorker.dispatch.workerChatId,
+            prompt: projectWorker.dispatch.prompt,
+            settings,
+            project: { title: project.title, repository: project.repository }
+          });
+          return { ok: true, projectDispatchId: projectWorker.dispatch.dispatchId };
+        }
         const state = await loadState();
         const index = findChatIndexByTab(state, sender.tab?.id);
         if (state?.running && index >= 0) return markContentReady(state, index);
@@ -1302,6 +1532,10 @@ if (typeof module !== "undefined") {
     MAX_CONNECTION_RETRIES,
     INITIAL_BATCH_GRACE_MS,
     PlannerProtocol,
+    WorkerProtocol,
+    ResultProtocol,
+    ReviewerProtocol,
+    IntegrationProtocol,
     ProjectStore
   };
 }

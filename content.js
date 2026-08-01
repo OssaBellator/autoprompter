@@ -64,11 +64,17 @@
     ],
     notices: [
       '[role="alert"]',
+      '[role="status"]',
+      '[role="dialog"]',
       '[aria-live="assertive"]',
+      '[aria-live="polite"]',
       '[data-testid*="error"]',
       '[data-testid*="warning"]',
+      '[data-testid*="retry"]',
       '[class*="error-message"]',
-      '[class*="toast"]'
+      '[class*="toast"]',
+      '[class*="popover"]',
+      '[class*="modal"]'
     ]
   });
 
@@ -142,6 +148,15 @@
     const connectionInterrupted = /connection interrupted\.?\s*waiting for the complete answer\.?$/i;
     if ((source === "notice" && /^connection interrupted\.?\s*waiting for the complete answer\.?$/i.test(candidate)) ||
         (source === "assistant" && connectionInterrupted.test(candidate))) {
+      return { kind: "connection_interrupted", message: text.slice(-500) };
+    }
+
+    // ChatGPT may display a non-selectable overlay while a request is being
+    // moved to a slower reasoning path. Treat the complete platform-shaped
+    // notice as a recoverable interruption so the current generation is
+    // stopped and the same-chat continuation retry path can take over.
+    const extendedThinkingNotice = /^our systems are thinking a bit more about this request before responding\.?\s*you can retry with a faster model for a quicker response,?\s*though it may be less capable of handling complex requests\.?(?:\s*learn more)?$/i;
+    if (source === "notice" && extendedThinkingNotice.test(candidate)) {
       return { kind: "connection_interrupted", message: text.slice(-500) };
     }
 
@@ -459,24 +474,47 @@
     ].filter(Boolean).join("\n");
   }
 
+  function accessibleNodeText(node) {
+    if (!node) return "";
+    const attributes = ["aria-label", "title", "data-tooltip-content", "data-message"]
+      .map(name => node.getAttribute?.(name) || "")
+      .filter(Boolean);
+    return normalizeText([node.innerText || "", node.textContent || "", ...attributes].join(" "));
+  }
+
   function liveNoticeTexts() {
     const parts = [];
     const conversationSelector = [
       '[data-message-author-role]', '[data-turn="assistant"]', '[data-turn="user"]',
       'article', '[data-testid^="conversation-turn-"]'
     ].join(', ');
+    const addNode = node => {
+      if (!isVisible(node)) return;
+      // Ignore live regions owned by chat turns, the composer, or containers
+      // that wrap the conversation. These commonly contain user/assistant prose.
+      if (node.closest?.(conversationSelector) || node.closest?.('form')) return;
+      if (node.querySelector?.(conversationSelector) || node.querySelector?.('#prompt-textarea, form')) return;
+      const text = accessibleNodeText(node);
+      if (text && text.length <= 2000 && !parts.includes(text)) parts.push(text);
+    };
+
     for (const selector of SELECTORS.notices) {
       let nodes = [];
       try { nodes = document.querySelectorAll(selector); } catch { nodes = []; }
-      for (const node of nodes) {
-        if (!isVisible(node)) continue;
-        // Ignore live regions owned by chat turns, the composer, or containers
-        // that wrap the conversation. These commonly contain user/assistant prose.
-        if (node.closest?.(conversationSelector) || node.closest?.('form')) continue;
-        if (node.querySelector?.(conversationSelector) || node.querySelector?.('#prompt-textarea, form')) continue;
-        const text = normalizeText(node.innerText || node.textContent || "");
-        if (text && text.length <= 2000 && !parts.includes(text)) parts.push(text);
-      }
+      for (const node of nodes) addNode(node);
+    }
+
+    // The extended-thinking notice can be rendered in an ordinary popover with
+    // user selection disabled and without role=alert. Its retry control remains
+    // accessible, so use that control as an anchor and inspect a small ancestor
+    // chain rather than scanning the whole page or conversation transcript.
+    let controls = [];
+    try { controls = document.querySelectorAll('a, button, [role="button"], [role="link"]'); } catch { controls = []; }
+    for (const control of controls) {
+      const label = accessibleNodeText(control);
+      if (!/retry with a faster model/i.test(label)) continue;
+      let node = control;
+      for (let depth = 0; node && depth < 6; depth += 1, node = node.parentElement) addNode(node);
     }
     return parts;
   }
@@ -1063,12 +1101,79 @@
     }
   }
 
+
+  async function executeProjectTask(message, controller) {
+    const signal = controller.signal;
+    const status = value => runtimeMessage({
+      type: "PROJECT_TASK_STATUS",
+      projectId: message.projectId,
+      dispatchId: message.dispatchId,
+      status: value
+    });
+    try {
+      const current = conversationInfo();
+      if (!current || current.id !== message.workerChatId) throw new Error("The managed tab opened a different worker conversation.");
+      await status("Waiting for the assigned worker chat");
+      let baseline = await waitForCompletedAssistant({ signal, settings: message.settings, status });
+      let retries = 0;
+      while (true) {
+        try {
+          const completed = await submitPrompt({
+            prompt: message.prompt,
+            signal,
+            status,
+            settings: message.settings,
+            baseline,
+            expectedConversationId: message.workerChatId,
+            delaySeconds: 0
+          });
+          await runtimeMessage({
+            type: "PROJECT_TASK_RESULT",
+            projectId: message.projectId,
+            dispatchId: message.dispatchId,
+            output: completed.text,
+            assistantSignature: completed.signature
+          });
+          return;
+        } catch (error) {
+          if (!(error instanceof JobInterruption) || error.kind !== "connection_interrupted" || retries >= 3) throw error;
+          retries += 1;
+          stopGeneratingBestEffort();
+          await status(`Connection interrupted; retrying task prompt (${retries}/3)`);
+          baseline = await waitForCompletedAssistant({ signal, settings: message.settings, status });
+        }
+      }
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+      if (error instanceof JobInterruption) {
+        await runtimeMessage({
+          type: "PROJECT_TASK_INTERRUPTED",
+          projectId: message.projectId,
+          dispatchId: message.dispatchId,
+          kind: error.kind,
+          error: error.message
+        });
+        return;
+      }
+      await runtimeMessage({
+        type: "PROJECT_TASK_ERROR",
+        projectId: message.projectId,
+        dispatchId: message.dispatchId,
+        error: error?.message || String(error)
+      });
+    }
+  }
+
   function startJob(message) {
     if (activeJob?.jobId === message.jobId) return;
     activeJob?.controller.abort();
     const controller = new AbortController();
     activeJob = { jobId: message.jobId, controller };
-    const runner = message.type === "RUN_SUCCESSOR_JOB" ? executeSuccessorJob : executeJob;
+    const runner = message.type === "RUN_SUCCESSOR_JOB"
+      ? executeSuccessorJob
+      : message.type === "RUN_PROJECT_TASK"
+        ? executeProjectTask
+        : executeJob;
 
     runner(message, controller).finally(() => {
       if (activeJob?.jobId === message.jobId) activeJob = null;
@@ -1080,7 +1185,7 @@
       sendResponse({ ok: true, chats: getChatCatalog() });
       return false;
     }
-    if (message?.type === "RUN_CHAT_JOB" || message?.type === "RUN_SUCCESSOR_JOB") {
+    if (message?.type === "RUN_CHAT_JOB" || message?.type === "RUN_SUCCESSOR_JOB" || message?.type === "RUN_PROJECT_TASK") {
       startJob(message);
       sendResponse({ ok: true, jobId: message.jobId });
       return false;
@@ -1114,6 +1219,8 @@
       classifyGuardrailText,
       matureGuardrail,
       shouldHandleInterruption,
+      accessibleNodeText,
+      liveNoticeTexts,
       isBlankConversationSurface,
       buildDurableWorkPrompt,
       buildInitializationPrompt,

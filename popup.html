@@ -106,7 +106,7 @@
     <details id="projectModePanel" class="continuity project-mode">
       <summary>Project Mode foundation</summary>
       <div class="details-body">
-        <p class="hint">Create durable project state, validate and approve a planner envelope, then prepare bounded worker leases. Project Mode still does not send planner, worker, reviewer, or integrator prompts.</p>
+        <p class="hint">Create durable project state, validate and approve a planner envelope, prepare bounded worker leases, and explicitly send selected assignments after manual model verification. Planner, reviewer, and integrator prompts remain manual.</p>
 
         <div class="project-toolbar">
           <label>
@@ -151,12 +151,17 @@
 
           <section id="workerWorkbench" class="worker-workbench">
             <strong>Worker lease preparation</strong>
-            <p class="hint">Starting a project enables local assignment preparation only. Prepared prompts stay in extension storage and are not sent to ChatGPT.</p>
+            <p class="hint">Prepare leases locally, inspect prompts, or explicitly dispatch them to assigned ChatGPT Web chats after verifying each worker model. Model selection is never automated.</p>
             <div class="inline-actions">
               <button id="startProjectMode" class="compact" type="button">Start project locally</button>
               <button id="prepareProjectAssignments" class="compact" type="button">Prepare assignments</button>
               <button id="recoverProjectLeases" class="compact" type="button">Recover expired leases</button>
             </div>
+            <label class="project-dispatch-confirmation">
+              <input id="projectModelVerified" type="checkbox">
+              I verified the configured model in every assigned worker chat
+            </label>
+            <button id="dispatchProjectAssignments" class="primary" type="button">Send prepared assignments to ChatGPT Web</button>
             <div id="projectWorkerState" class="project-worker-state"></div>
             <label>
               Prepared assignment
@@ -164,7 +169,46 @@
                 <option value="">No prepared assignments</option>
               </select>
             </label>
-            <textarea id="projectDispatchPrompt" rows="8" readonly placeholder="Prepared worker prompts remain local until a later dispatch milestone"></textarea>
+            <textarea id="projectDispatchPrompt" rows="8" readonly placeholder="Choose an assignment to inspect its prompt"></textarea>
+
+            <section class="result-review-workbench">
+              <strong>Result and independent review</strong>
+              <p class="hint">Live worker replies are captured automatically. For manual work, paste the exact result envelope for the selected dispatch. A separate reviewer envelope is required before the task can be accepted.</p>
+              <label>
+                Worker result envelope
+                <textarea id="projectResultInput" rows="8" maxlength="120000" placeholder="AUTOPROMPTER_TASK_RESULT_BEGIN&#10;{ ... }&#10;AUTOPROMPTER_TASK_RESULT_END"></textarea>
+              </label>
+              <button id="submitProjectResult" class="compact" type="button">Validate worker result</button>
+              <button id="buildProjectReviewerPrompt" class="compact" type="button">Generate reviewer prompt</button>
+              <label>
+                Reviewer prompt
+                <textarea id="projectReviewerPrompt" rows="8" readonly></textarea>
+              </label>
+              <label>
+                Reviewer response envelope
+                <textarea id="projectReviewInput" rows="8" maxlength="120000" placeholder="AUTOPROMPTER_REVIEW_BEGIN&#10;{ ... }&#10;AUTOPROMPTER_REVIEW_END"></textarea>
+              </label>
+              <button id="submitProjectReview" class="compact" type="button">Validate reviewer decision</button>
+            </section>
+
+            <section class="integration-workbench">
+              <strong>Integration evidence</strong>
+              <p class="hint">After every task is independently accepted, generate an integrator prompt. Integration remains on a non-default branch and project completion requires explicit approval.</p>
+              <button id="buildProjectIntegratorPrompt" class="compact" type="button">Generate integrator prompt</button>
+              <label>
+                Integrator prompt
+                <textarea id="projectIntegratorPrompt" rows="8" readonly></textarea>
+              </label>
+              <label>
+                Integration response envelope
+                <textarea id="projectIntegrationInput" rows="8" maxlength="120000" placeholder="AUTOPROMPTER_INTEGRATION_BEGIN&#10;{ ... }&#10;AUTOPROMPTER_INTEGRATION_END"></textarea>
+              </label>
+              <div class="inline-actions">
+                <button id="submitProjectIntegration" class="compact" type="button">Validate integration</button>
+                <button id="approveProjectIntegration" class="compact" type="button">Approve completion</button>
+                <button id="discardProjectIntegration" class="compact" type="button">Discard integration</button>
+              </div>
+            </section>
           </section>
         </div>
 

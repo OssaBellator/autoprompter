@@ -24,6 +24,8 @@ const {
   classifyGuardrailText,
   matureGuardrail,
   shouldHandleInterruption,
+  accessibleNodeText,
+  liveNoticeTexts,
   buildDurableWorkPrompt,
   buildInitializationPrompt,
   extractCheckpointMarker,
@@ -172,6 +174,47 @@ test("connection interruption is classified as a recoverable interruption", () =
     classifyGuardrailText("Partial generated answer. Connection interrupted. Waiting for the complete answer", "assistant").kind,
     "connection_interrupted"
   );
+});
+
+test("extended-thinking overlay is a recoverable interruption", () => {
+  const exact = "Our systems are thinking a bit more about this request before responding. You can retry with a faster model for a quicker response, though it may be less capable of handling complex requests. Learn more";
+  assert.equal(classifyGuardrailText(exact, "notice").kind, "connection_interrupted");
+  assert.equal(
+    classifyGuardrailText("We are documenting that our systems are thinking a bit more about this request.", "assistant"),
+    null
+  );
+});
+
+test("non-selectable retry overlay is discovered through accessible DOM text", () => {
+  const exact = "Our systems are thinking a bit more about this request before responding. You can retry with a faster model for a quicker response, though it may be less capable of handling complex requests. Learn more";
+  const overlay = {
+    isConnected: true,
+    innerText: "",
+    textContent: exact,
+    parentElement: null,
+    getAttribute: () => "",
+    closest: () => null,
+    querySelector: () => null,
+    getBoundingClientRect: () => ({ width: 500, height: 80 })
+  };
+  const retry = {
+    isConnected: true,
+    innerText: "",
+    textContent: "",
+    parentElement: overlay,
+    getAttribute: name => name === "aria-label" ? "Retry with a faster model" : "",
+    closest: () => null,
+    querySelector: () => null,
+    getBoundingClientRect: () => ({ width: 120, height: 30 })
+  };
+  const originalQuery = document.querySelectorAll;
+  document.querySelectorAll = selector => selector === 'a, button, [role="button"], [role="link"]' ? [retry] : [];
+  try {
+    assert.equal(accessibleNodeText(retry), "Retry with a faster model");
+    assert.ok(liveNoticeTexts().includes(exact));
+  } finally {
+    document.querySelectorAll = originalQuery;
+  }
 });
 
 test("current maximum-length wording triggers context rollover", () => {

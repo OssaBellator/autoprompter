@@ -22,20 +22,145 @@
     "expiredAt"
   ],
   "properties": {
-    "schemaVersion": { "const": "1.0" },
-    "dispatchId": { "type": "string", "pattern": "^dispatch-[a-z0-9._-]+$", "maxLength": 200 },
-    "projectId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$" },
-    "planRevision": { "type": "integer", "minimum": 1, "maximum": 1000 },
-    "taskId": { "type": "string", "pattern": "^task-[a-z0-9._-]+$" },
-    "workerChatId": { "type": "string", "minLength": 1, "maxLength": 200 },
-    "attempt": { "type": "integer", "minimum": 1, "maximum": 50 },
-    "branch": { "type": "string", "pattern": "^agent/[a-z0-9._-]+/[a-z0-9._-]+$", "maxLength": 240 },
-    "status": { "type": "string", "enum": ["prepared", "dispatched", "running", "completed", "expired", "cancelled"] },
-    "assignedAt": { "type": "string", "format": "date-time" },
-    "expiresAt": { "type": "string", "format": "date-time" },
-    "prompt": { "type": "string", "minLength": 1, "maxLength": 18000 },
-    "createdAt": { "type": "string", "format": "date-time" },
-    "updatedAt": { "type": "string", "format": "date-time" },
-    "expiredAt": { "type": ["string", "null"], "format": "date-time" }
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "dispatchId": {
+      "type": "string",
+      "pattern": "^dispatch-[a-z0-9._-]+$",
+      "maxLength": 200
+    },
+    "projectId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$"
+    },
+    "planRevision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000
+    },
+    "taskId": {
+      "type": "string",
+      "pattern": "^task-[a-z0-9._-]+$"
+    },
+    "workerChatId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
+    },
+    "branch": {
+      "type": "string",
+      "pattern": "^agent/[a-z0-9._-]+/[a-z0-9._-]+$",
+      "maxLength": 240
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "prepared",
+        "dispatched",
+        "running",
+        "review",
+        "accepted",
+        "revision_required",
+        "rejected",
+        "expired",
+        "transport_failed",
+        "cancelled"
+      ]
+    },
+    "assignedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "prompt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 18000
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiredAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "workerTabId": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "lastStatus": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 500
+    },
+    "lastError": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "resultDigest": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[a-z0-9]{7}$"
+    },
+    "reviewDecision": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "accepted",
+        "revision_required",
+        "rejected",
+        null
+      ]
+    },
+    "dispatchedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "resultReceivedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "reviewedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    }
   }
 }

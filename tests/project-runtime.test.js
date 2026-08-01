@@ -117,9 +117,9 @@ test("GET_PROJECTS initializes and persists the current store schema", async () 
   resetHarness();
   const response = await dispatch("GET_PROJECTS");
   assert.equal(response.ok, true);
-  assert.equal(response.projectStoreVersion, "1.2");
+  assert.equal(response.projectStoreVersion, "1.4");
   assert.deepEqual(response.projects, []);
-  assert.equal(localStore.autoprompterProjects.schemaVersion, "1.2");
+  assert.equal(localStore.autoprompterProjects.schemaVersion, "1.4");
 });
 
 test("project lifecycle commands persist deterministic transitions", async () => {

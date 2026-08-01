@@ -284,6 +284,12 @@
       attempt: 0,
       lease: null,
       resultCommit: null,
+      lastResultDispatchId: null,
+      lastReviewDispatchId: null,
+      acceptedDispatchId: null,
+      acceptedBranch: null,
+      acceptedCommit: null,
+      requiredChanges: [],
       createdAt: at,
       updatedAt: at
     }]));

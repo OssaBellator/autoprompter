@@ -25,7 +25,7 @@ AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that runs sele
 - Verified successor chats when a repository checkpoint is available, plus best-effort fresh-chat recovery for actual context-limit failures that occur before a checkpoint can be created.
 - Incremental durability instructions that ask the selected repository tool to commit completed logical units before lengthy or risky work continues.
 - Default-on automatic circuit breaker for rate limits, account restrictions, and safety blocks, with an explicit disable option for false-positive troubleshooting.
-- Draft Project Mode foundation on the development branch: versioned local project storage, fixed planner/reviewer/integrator roles, strict planner-envelope validation, approval-gated task creation, deterministic worker leases, bounded local assignment preparation, restart recovery, and an audit trail. Prepared worker prompts remain local and are not sent automatically.
+- Draft Project Mode on the development branch: strict planner/result/reviewer/integration envelopes, deterministic worker leases, bounded revisions, dependency progression, explicit completion approval, and opt-in ChatGPT Web worker dispatch after manual model verification. It does not automate model selection or merge/publish actions.
 
 ## Install in Edge
 
@@ -102,7 +102,7 @@ ChatGPT does not expose a stable browser API for exact per-conversation context 
 AutoPrompter classifies visible interruption messages conservatively:
 
 - **Context limit:** use a verified repository handoff when possible. The detector includes `You’ve reached the maximum length for this conversation, but you can keep talking by starting a new chat.` If the context-limit message arrives before a checkpoint can be created, open a best-effort fresh chat using the selected chat title, configured work prompt, and any repository details. The extension explicitly tells the new chat that it cannot see the old transcript.
-- **Connection interrupted:** stop the interrupted generation when a stop control is available, then queue a same-chat continuation prompt without incrementing completed-work progress. Retries are capped at three consecutive attempts.
+- **Recoverable generation interruption:** for `Connection interrupted. Waiting for the complete answer` and the non-selectable `Our systems are thinking a bit more... retry with a faster model` overlay, stop the current generation when possible and queue a same-chat continuation prompt without incrementing completed-work progress. Retries are capped at three consecutive attempts.
 - **Prolonged stall or content removal:** require a verified checkpoint before rollover. Stuck-generation labels—`Thinking…`, `Generating…`, and `Working…`—must persist for the configured stall timeout before rollover.
 - **Suspicious activity, rate limit, temporary account restriction, or safety block:** stop the whole scheduler and notify the user. Documented restriction variants include `We detect suspicious activity.`, `Unusual Activity Detected`, `Unusual activity has been detected from your device. Try again later`, and `Sorry, you have been blocked`.
 - **Missing checkpoint:** stop and request manual review rather than opening a successor with guessed state.

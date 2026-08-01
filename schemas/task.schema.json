@@ -21,7 +21,13 @@
     "attempt",
     "lease",
     "createdAt",
-    "updatedAt"
+    "updatedAt",
+    "lastResultDispatchId",
+    "lastReviewDispatchId",
+    "acceptedDispatchId",
+    "acceptedBranch",
+    "acceptedCommit",
+    "requiredChanges"
   ],
   "properties": {
     "schemaVersion": {
@@ -191,6 +197,50 @@
     "updatedAt": {
       "type": "string",
       "format": "date-time"
+    },
+    "lastResultDispatchId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^dispatch-[a-z0-9._-]+$"
+    },
+    "lastReviewDispatchId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^dispatch-[a-z0-9._-]+$"
+    },
+    "acceptedDispatchId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^dispatch-[a-z0-9._-]+$"
+    },
+    "acceptedBranch": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 240
+    },
+    "acceptedCommit": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-fA-F]{7,64}$"
+    },
+    "requiredChanges": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      }
     }
   }
 }
