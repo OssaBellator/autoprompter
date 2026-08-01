@@ -33,6 +33,11 @@ test("popup resolves a created project from activeProjectId without dereferencin
   assert.match(popupJs, /Reload AutoPrompter at edge:\/\/extensions/);
 });
 
+test("popup rejects an absent background response before reading Project Mode fields", () => {
+  assert.match(popupJs, /if \(!response \|\| typeof response !== "object"\)/);
+  assert.match(popupJs, /background service did not return a valid response/);
+});
+
 test("unknown runtime commands fail instead of returning a successful-looking response", () => {
   assert.match(backgroundJs, /throw new Error\(`Unknown AutoPrompter runtime command:/);
   assert.doesNotMatch(backgroundJs, /return \{ running: false, status: "Unknown command" \}/);
