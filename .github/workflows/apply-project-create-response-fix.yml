@@ -85,13 +85,9 @@ jobs:
 
           background = Path('background.js')
           text = background.read_text(encoding='utf-8')
-          old_unknown = '''      default:
-                return { running: false, status: "Unknown command" };
-          '''
-          new_unknown = '''      default:
-                throw new Error(`Unknown AutoPrompter runtime command: ${String(message.type || "missing")}`);
-          '''
-          if old_unknown not in text:
+          old_unknown = 'return { running: false, status: "Unknown command" };'
+          new_unknown = 'throw new Error(`Unknown AutoPrompter runtime command: ${String(message.type || "missing")}`);'
+          if text.count(old_unknown) != 1:
               raise SystemExit('background unknown-command source did not match expected baseline')
           background.write_text(text.replace(old_unknown, new_unknown, 1), encoding='utf-8')
 
