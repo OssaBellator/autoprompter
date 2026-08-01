@@ -113,7 +113,22 @@ function fillSettings(settings) {
 }
 
 async function runtimeMessage(type, extra = {}) {
-  return chrome.runtime.sendMessage({ scope: MESSAGE_SCOPE, type, ...extra });
+  const response = await chrome.runtime.sendMessage({ scope: MESSAGE_SCOPE, type, ...extra });
+  if (!response || typeof response !== "object") {
+    throw new Error("AutoPrompter's background service did not return a valid response. Reload the extension and refresh ChatGPT tabs.");
+  }
+  return response;
+}
+
+function resolveCreatedProject(response) {
+  const projects = Array.isArray(response?.projects) ? response.projects : [];
+  const directProject = response?.project && typeof response.project === "object" ? response.project : null;
+  const projectId = String(directProject?.projectId || response?.activeProjectId || "").trim();
+  if (!projectId) {
+    throw new Error("Project creation did not return a project ID. Reload AutoPrompter at edge://extensions, refresh ChatGPT tabs, and try again.");
+  }
+  const project = directProject || projects.find(item => item?.projectId === projectId) || null;
+  return { projectId, project, projects };
 }
 
 async function persistSelection() {
@@ -455,13 +470,13 @@ async function createProjectDraft() {
     }
   });
   if (response.ok === false) throw new Error(response.error || "Could not create project.");
-  projectState.projects = response.projects || [];
-  projectState.activeProjectId = response.activeProjectId;
-  projectState.project = response.project;
+  const created = resolveCreatedProject(response);
+  projectState.projects = created.projects;
+  projectState.activeProjectId = created.projectId;
+  projectState.project = created.project;
   projectState.events = [];
-  elements.projectSelect.value = response.project.projectId;
-  elements.projectMessage.textContent = `Created ${response.project.projectId}. No chats were dispatched.`;
-  await inspectProject(response.project.projectId);
+  elements.projectMessage.textContent = `Created ${created.projectId}. No chats were dispatched.`;
+  await inspectProject(created.projectId);
 }
 
 async function generatePlannerPrompt() {
