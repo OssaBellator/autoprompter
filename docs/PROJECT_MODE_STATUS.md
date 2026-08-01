@@ -19,6 +19,8 @@ Planner, reviewer, and integrator prompts can still be copied manually. Live wor
 
 The result, review, integration, web-dispatch, and recoverable-overlay frontiers are validated together before any source commit is created.
 
+The non-selectable extended-thinking overlay is detected through scoped live-region text and the accessible label of its retry control. It is handled as a bounded same-chat interruption retry: stop generation when possible, send the existing continuation prompt, and do not increment completed-work progress.
+
 ## Next milestone
 
 Add integrator-side conflict/retry handling, explicit approval queues for merge/release actions, durable repository reconciliation after browser restart, and stronger live-dispatch recovery for context-limit successors without weakening identity checks.
