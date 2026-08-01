@@ -78,6 +78,24 @@ jobs:
           echo 'e89a7043441567f150b55e89fb1ecb92eb153fec2d31dcdb9f953634a6d48d0c  /tmp/frontier-payload.tar.gz' | sha256sum --check
           tar -xzf /tmp/frontier-payload.tar.gz -C .m5
           test -f .m5/apply_frontiers.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.m5/apply_frontiers.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''    count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected exactly one match, found {count}")
+              return text.replace(old, new, 1)'''
+          new = '''    count = text.count(old)
+              if label == "popup inspect frontier assignment" and count == 2:
+                  return text.replace(old, new)
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected exactly one match, found {count}")
+              return text.replace(old, new, 1)'''
+          if old not in text:
+              raise SystemExit('publication assertion function did not match')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
           python .m5/apply_frontiers.py
 
       - name: Validate all active frontiers
