@@ -5,6 +5,7 @@ on:
     types: [opened, reopened, synchronize]
     paths:
       - '.frontiers-trigger'
+      - '.m5/overlay-recovery.patch'
       - '.github/workflows/apply-project-mode-frontiers.yml'
 
 permissions:
@@ -78,6 +79,7 @@ jobs:
           echo 'e89a7043441567f150b55e89fb1ecb92eb153fec2d31dcdb9f953634a6d48d0c  /tmp/frontier-payload.tar.gz' | sha256sum --check
           tar -xzf /tmp/frontier-payload.tar.gz -C .m5
           test -f .m5/apply_frontiers.py
+          test -f .m5/overlay-recovery.patch
           python - <<'PY'
           from pathlib import Path
           path = Path('.m5/apply_frontiers.py')
@@ -89,19 +91,21 @@ jobs:
           new = '''    count = text.count(old)
               if label == "popup inspect frontier assignment" and count == 2:
                   return text.replace(old, new)
+              if label == "status safety and next" and count == 0:
+                  return text
               if count != 1:
                   raise RuntimeError(f"{label}: expected exactly one match, found {count}")
               return text.replace(old, new, 1)'''
           if old not in text:
               raise SystemExit('publication assertion function did not match')
-          text = text.replace(old, new, 1)
-          previous_status = '''Planner and worker prompts are generated for manual use. Starting a project changes only extension-local state. Preparing assignments does not open tabs, send ChatGPT messages, write repositories, run task commands, or claim that a worker executed anything. Active leases are local coordination records and expire automatically.
-
-          ## Next milestone
-
-          Add strict `AUTOPROMPTER_TASK_RESULT_BEGIN` / `AUTOPROMPTER_TASK_RESULT_END` parsing, dispatch/result identity checks, verification-evidence validation, and explicit reviewer acceptance or bounded revision decisions. Live worker submission remains disabled until result handling and recovery are complete.
-          '''
-          current_status = '''Planner and worker prompts are generated for manual use. Starting a project changes only extension-local state. Preparing assignments does not open tabs, send ChatGPT messages, write repositories, run task commands, or claim that a worker executed anything. Active leases are local coordination records and expire automatically.
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          python .m5/apply_frontiers.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('docs/PROJECT_MODE_STATUS.md')
+          text = path.read_text(encoding='utf-8')
+          old = '''Planner and worker prompts are generated for manual use. Starting a project changes only extension-local state. Preparing assignments does not open tabs, send ChatGPT messages, write repositories, run task commands, or claim that a worker executed anything. Active leases are local coordination records and expire automatically.
 
           ## Milestone 4 validation
 
@@ -111,16 +115,22 @@ jobs:
 
           Add strict `AUTOPROMPTER_TASK_RESULT_BEGIN` / `AUTOPROMPTER_TASK_RESULT_END` parsing, dispatch/result identity checks, verification-evidence validation, and explicit reviewer acceptance or bounded revision decisions. Live worker submission remains disabled until result handling and recovery are complete.
           '''
-          if previous_status not in text:
-              raise SystemExit('status publication needle did not match')
-          text = text.replace(previous_status, current_status, 1)
-          previous_readme = '- Draft Project Mode foundation on the development branch: versioned local project storage, fixed planner/reviewer/integrator roles, selected-chat worker pools, lifecycle controls, strict planner-envelope validation, approval-gated task creation, and an audit trail. The foundation does not dispatch agents yet.'
-          current_readme = '- Draft Project Mode foundation on the development branch: versioned local project storage, fixed planner/reviewer/integrator roles, strict planner-envelope validation, approval-gated task creation, deterministic worker leases, bounded local assignment preparation, restart recovery, and an audit trail. Prepared worker prompts remain local and are not sent automatically.'
-          if previous_readme not in text:
-              raise SystemExit('README publication needle did not match')
-          path.write_text(text.replace(previous_readme, current_readme, 1), encoding='utf-8')
+          new = '''Planner, reviewer, and integrator prompts can still be copied manually. Live worker dispatch is opt-in and requires the user to verify each worker chat's model first. AutoPrompter never selects a model, merges to the default branch, publishes, changes permissions, rotates accounts, or bypasses platform restrictions. Worker results require independent review, and integration requires explicit completion approval.
+
+          ## Frontier validation
+
+          The result, review, integration, web-dispatch, and recoverable-overlay frontiers are validated together before any source commit is created.
+
+          ## Next milestone
+
+          Add integrator-side conflict/retry handling, explicit approval queues for merge/release actions, durable repository reconciliation after browser restart, and stronger live-dispatch recovery for context-limit successors without weakening identity checks.
+          '''
+          if old not in text:
+              raise SystemExit('current status section did not match')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
-          python .m5/apply_frontiers.py
+          git apply --check .m5/overlay-recovery.patch
+          git apply .m5/overlay-recovery.patch
 
       - name: Validate all active frontiers
         shell: bash
@@ -148,6 +158,8 @@ jobs:
           grep -q 'DISPATCH_PROJECT_ASSIGNMENTS' background.js
           grep -q 'modelVerified' background.js
           grep -q 'STORE_SCHEMA_VERSION = "1.4"' project-store.js
+          grep -q 'our systems are thinking a bit more about this request' content.js
+          grep -q 'non-selectable retry overlay is discovered' tests/content.test.js
 
       - name: Commit validated frontier source
         shell: bash
@@ -159,5 +171,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'Advance Project Mode result review integration and web dispatch frontiers'
+          git commit -m 'Advance Project Mode frontiers and recover extended-thinking overlays'
           git push origin HEAD:agent/web-first-multi-agent-project-mode
