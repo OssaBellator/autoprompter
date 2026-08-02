@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AutoPrompter for ChatGPT",
-  "version": "4.0.2",
+  "version": "4.0.3",
   "description": "Create or recover GitHub issues with a planner, run temporary issue workers, and review or merge each pull request.",
   "minimum_chrome_version": "102",
   "permissions": [
