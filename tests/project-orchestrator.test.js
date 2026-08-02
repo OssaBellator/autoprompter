@@ -107,6 +107,7 @@ test("extension adapts fresh task, reviewer, and integrator jobs into guarded co
 
   assert.deepEqual(manifest.content_scripts[0].js.slice(-2), ["project-role-runner.js", "content.js"]);
   assert.match(entry, /AutoPrompterProjectOrchestrator\.start\(\)/);
+  assert.match(entry, /AutoPrompterProjectRoleKick\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectTaskBoardController\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectAutoBootstrap\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectAdmin\.start\(\)/);
@@ -120,5 +121,5 @@ test("extension adapts fresh task, reviewer, and integrator jobs into guarded co
   assert.match(projectUi, /Advanced recovery and diagnostics/);
   assert.match(projectUi, /projectPickerMenu/);
   assert.match(projectUi, /Branch task board/);
-  assert.equal(manifest.version, "3.4.1");
+  assert.equal(manifest.version, "3.4.2");
 });
