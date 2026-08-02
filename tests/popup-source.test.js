@@ -34,7 +34,10 @@ test("chat discovery preserves sidebar order instead of alphabetizing", () => {
 test("Project Mode foundation exposes lifecycle and approval-gated planner controls", () => {
   assert.match(popupHtml, /id="projectModePanel"/);
   assert.match(popupHtml, /id="createProject"/);
-  assert.match(popupHtml, /Planner, reviewer, and integrator prompts remain manual/);
+  assert.match(popupHtml, /id="projectExistingTab"/);
+  assert.match(popupHtml, /id="projectNewTab"/);
+  assert.match(popupHtml, /id="projectExistingPanel"/);
+  assert.match(popupHtml, /id="projectNewPanel"/);
   assert.match(popupJs, /runtimeMessage\("CREATE_PROJECT"/);
   assert.match(popupJs, /runtimeMessage\("INSPECT_PROJECT"/);
   assert.match(popupJs, /transitionProject\("PAUSE_PROJECT"\)/);

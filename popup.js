@@ -34,7 +34,8 @@ const elements = Object.fromEntries([
   "statusText", "statusDetail", "chatConfigPanel", "chatConfigChat", "chatPrompt", "chatContinuityMode",
   "chatRepository", "chatHandoffFile", "chatPluginInstruction", "saveChatConfig", "clearChatConfig",
   "selectionControls", "progressPanel", "progressSummary", "progressList",
-  "projectModePanel", "projectSelect", "inspectProject", "projectStatusCard", "projectStatusTitle",
+  "projectModePanel", "projectExistingTab", "projectNewTab", "projectExistingPanel", "projectNewPanel",
+  "projectSelect", "inspectProject", "projectStatusCard", "projectStatusTitle",
   "projectStatusBadge", "projectStatusMeta", "projectInspectOutput", "pauseProject", "resumeProject",
   "cancelProject", "projectTitle", "projectGoal", "projectRepository", "projectPlannerChat",
   "projectReviewerChat", "projectIntegratorChat", "projectWorkerHint", "createProject", "projectMessage",
@@ -63,6 +64,7 @@ let activeChatEditorId = "";
 let loadingChatEditor = false;
 let chatConfigPersistTimer = null;
 let wasRunning = false;
+let activeProjectTab = "existing";
 let projectState = {
   projects: [], activeProjectId: null, project: null, events: [],
   pendingPlan: null, approvedPlan: null, tasks: {}, dispatches: {}, results: {}, reviews: {}, integration: null,
@@ -147,6 +149,29 @@ function visibleCatalog() {
   const query = elements.filter.value.trim().toLowerCase();
   if (!query) return catalog;
   return catalog.filter(chat => chat.title.toLowerCase().includes(query));
+}
+
+function setProjectTab(tab, { focus = false } = {}) {
+  const next = tab === "new" ? "new" : "existing";
+  activeProjectTab = next;
+  const existingActive = next === "existing";
+
+  elements.projectExistingTab.classList.toggle("active", existingActive);
+  elements.projectNewTab.classList.toggle("active", !existingActive);
+  elements.projectExistingTab.setAttribute("aria-selected", String(existingActive));
+  elements.projectNewTab.setAttribute("aria-selected", String(!existingActive));
+  elements.projectExistingTab.tabIndex = existingActive ? 0 : -1;
+  elements.projectNewTab.tabIndex = existingActive ? -1 : 0;
+  elements.projectExistingPanel.hidden = !existingActive;
+  elements.projectNewPanel.hidden = existingActive;
+  if (focus) (existingActive ? elements.projectExistingTab : elements.projectNewTab).focus();
+}
+
+function handleProjectTabKeydown(event) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const next = event.key === "ArrowLeft" || event.key === "Home" ? "existing" : "new";
+  setProjectTab(next, { focus: true });
 }
 
 function projectRoleSelects() {
@@ -400,6 +425,7 @@ async function refreshProjects({ inspectActive = true } = {}) {
   if (response.ok === false) throw new Error(response.error || "Could not load projects.");
   projectState.projects = response.projects || [];
   projectState.activeProjectId = response.activeProjectId || null;
+  if (!projectState.projects.length && activeProjectTab === "existing") setProjectTab("new");
   if (inspectActive && projectState.activeProjectId) await inspectProject(projectState.activeProjectId);
   else {
     projectState.project = null;
@@ -489,6 +515,7 @@ async function createProjectDraft() {
   projectState.activeProjectId = created.projectId;
   projectState.project = created.project;
   projectState.events = [];
+  setProjectTab("existing");
   elements.projectMessage.textContent = `Created ${created.projectId}. Creating role chats and running the planner automatically…`;
   const bootstrapResponse = await runtimeMessage("START_PROJECT_BOOTSTRAP", { projectId: created.projectId });
   if (bootstrapResponse.ok === false) throw new Error(bootstrapResponse.error || "Could not start autonomous Project Mode bootstrap.");
@@ -1099,6 +1126,7 @@ async function initialize() {
   catalog = Array.isArray(stored[CATALOG_KEY]) ? stored[CATALOG_KEY] : [];
   selectedIds = new Set(Array.isArray(stored[SELECTION_KEY]) ? stored[SELECTION_KEY] : []);
   chatConfigs = stored[CHAT_CONFIGS_KEY] && typeof stored[CHAT_CONFIGS_KEY] === "object" ? stored[CHAT_CONFIGS_KEY] : {};
+  setProjectTab("existing");
   renderCatalog();
   await refreshState();
   await refreshProjects();
@@ -1120,6 +1148,10 @@ elements.clearChatConfig.addEventListener("click", () => clearChatEditor().catch
 elements.continuityEnabled.addEventListener("change", () => { elements.continuityPanel.open = elements.continuityEnabled.checked; updateFieldAvailability(); saveSettings().catch(() => {}); });
 elements.notificationsEnabled.addEventListener("change", () => { updateFieldAvailability(); saveSettings().catch(() => {}); });
 elements.disableCircuitBreaker.addEventListener("change", () => saveSettings().catch(() => {}));
+elements.projectExistingTab.addEventListener("click", () => setProjectTab("existing"));
+elements.projectNewTab.addEventListener("click", () => setProjectTab("new"));
+elements.projectExistingTab.addEventListener("keydown", handleProjectTabKeydown);
+elements.projectNewTab.addEventListener("keydown", handleProjectTabKeydown);
 elements.createProject.addEventListener("click", () => createProjectDraft().catch(error => { elements.projectMessage.textContent = error.message; }));
 elements.inspectProject.addEventListener("click", () => inspectProject().catch(error => { elements.projectMessage.textContent = error.message; }));
 elements.projectSelect.addEventListener("change", () => inspectProject().catch(error => { elements.projectMessage.textContent = error.message; }));

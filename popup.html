@@ -104,9 +104,15 @@
     </details>
 
     <details id="projectModePanel" class="continuity project-mode">
-      <summary>Project Mode foundation</summary>
+      <summary>Project Mode</summary>
       <div class="details-body">
-        <p class="hint">Create durable project state, validate and approve a planner envelope, prepare bounded worker leases, and explicitly send selected assignments after manual model verification. Planner, reviewer, and integrator prompts remain manual.</p>
+        <div class="project-tabs" role="tablist" aria-label="Project Mode views">
+          <button id="projectExistingTab" class="project-tab active" type="button" role="tab" aria-selected="true" aria-controls="projectExistingPanel">Existing projects</button>
+          <button id="projectNewTab" class="project-tab" type="button" role="tab" aria-selected="false" aria-controls="projectNewPanel" tabindex="-1">New project</button>
+        </div>
+
+        <section id="projectExistingPanel" class="project-tab-panel" role="tabpanel" aria-labelledby="projectExistingTab">
+          <p class="hint">Select a saved project to inspect progress, retry bootstrap, manage assignments, review results, and approve integration.</p>
 
         <div class="project-toolbar">
           <label>
@@ -277,6 +283,10 @@
           </section>
         </div>
 
+        </section>
+
+        <section id="projectNewPanel" class="project-tab-panel" role="tabpanel" aria-labelledby="projectNewTab" hidden>
+          <p class="hint">Create a new durable project. The selected chats become workers, while planner, reviewer, and integrator chats can be created automatically.</p>
         <label>
           Project title
           <input id="projectTitle" type="text" maxlength="160" placeholder="AutoPrompter Project Mode">
@@ -306,7 +316,8 @@
         </label>
         <p id="projectWorkerHint" class="hint">Currently selected chats become the worker pool. Leave fixed roles on “Create automatically” to create and initialize fresh planner, reviewer, and integrator chats.</p>
         <button id="createProject" class="primary project-create" type="button">Create and bootstrap project</button>
-        <p id="projectMessage" class="hint" aria-live="polite"></p>
+        </section>
+        <p id="projectMessage" class="hint project-message" aria-live="polite"></p>
       </div>
     </details>
 
