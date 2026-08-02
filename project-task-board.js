@@ -47,6 +47,100 @@
       .filter(task => task?.status === "ready" && !task.lease);
   }
 
+  function dependencyEvidence(task, tasks) {
+    return (Array.isArray(task?.dependencies) ? task.dependencies : []).map(dependencyId => {
+      const dependency = tasks[dependencyId] || {};
+      return {
+        taskId: dependencyId,
+        branch: dependency.acceptedBranch || dependency.branch || "",
+        commit: dependency.acceptedCommit || dependency.resultCommit || ""
+      };
+    });
+  }
+
+  function buildTaskPrompt(project, task, dispatch) {
+    const dependencies = Array.isArray(dispatch.dependencyEvidence) ? dispatch.dependencyEvidence : [];
+    const branchSetup = dependencies.length
+      ? [
+          `Create or reset ${dispatch.branch} from dependency commit ${dependencies[0].commit}.`,
+          ...dependencies.slice(1).map(item => `Incorporate reviewed dependency commit ${item.commit} from ${item.branch} without changing its reviewed scope.`),
+          "Stop and report blocked if dependency commits conflict and cannot be combined conservatively."
+        ]
+      : [
+          `Create or reset ${dispatch.branch} from the latest ${project.repository.defaultBranch}.`
+        ];
+    const checks = Array.isArray(task.verificationCommands) && task.verificationCommands.length
+      ? task.verificationCommands.map(command => `- ${command}`)
+      : ["- Run the repository's relevant existing checks and report exactly what was run."];
+    const acceptance = (Array.isArray(task.acceptanceCriteria) ? task.acceptanceCriteria : [])
+      .map((item, index) => `${index + 1}. ${item}`);
+    const revisionRequirements = Array.isArray(task.requiredChanges) && task.requiredChanges.length
+      ? task.requiredChanges.map(item => `- ${item}`)
+      : ["- None."];
+    return [
+      "You are one independent worker on an AutoPrompter branch task board.",
+      "Work only on this task. Other independent tasks are running in separate ChatGPT conversations and Git branches.",
+      "",
+      `Project: ${project.title}`,
+      `Project ID: ${project.projectId}`,
+      `Repository: ${project.repository.slug}`,
+      `Default branch: ${project.repository.defaultBranch}`,
+      `Task ID: ${task.id}`,
+      `Dispatch ID: ${dispatch.dispatchId}`,
+      `Attempt: ${dispatch.attempt}`,
+      `Assigned branch: ${dispatch.branch}`,
+      "",
+      "Branch setup",
+      ...branchSetup,
+      "",
+      "Accepted dependency evidence",
+      dependencies.length ? JSON.stringify(dependencies, null, 2) : "None. This task is independent and may start immediately.",
+      "",
+      "Task",
+      task.description,
+      "",
+      "Allowed paths",
+      ...(Array.isArray(task.allowedPaths) ? task.allowedPaths.map(path => `- ${path}`) : ["- No paths supplied; stop and report blocked."]),
+      "",
+      "Acceptance criteria",
+      ...(acceptance.length ? acceptance : ["1. Complete the task with reviewable repository evidence."]),
+      "",
+      "Verification",
+      ...checks,
+      "",
+      "Reviewer-requested changes",
+      ...revisionRequirements,
+      "",
+      "Rules",
+      "- Inspect the repository before editing.",
+      "- Stay on the assigned branch and within the task's allowed paths.",
+      "- Do not modify workflows, permissions, releases, or the default branch unless this task explicitly requires an allowlisted workflow file.",
+      "- Commit reviewable changes to the assigned branch.",
+      "- Do not merge other unreviewed task branches.",
+      "- Do not invent commits, test results, or repository state.",
+      "- When repository writes are unavailable, return blocked with the exact limitation instead of attempting unrelated setup.",
+      "",
+      "Return exactly one JSON object between these markers, with no prose outside them:",
+      WorkerProtocol.TASK_RESULT_BEGIN,
+      JSON.stringify({
+        schemaVersion: "1.0",
+        projectId: project.projectId,
+        taskId: task.id,
+        dispatchId: dispatch.dispatchId,
+        attempt: dispatch.attempt,
+        status: "completed | blocked | failed",
+        summary: "concise result or blocker explanation",
+        commit: "commit SHA or null",
+        tests: [{ command: "command", status: "passed | failed | not_run", summary: "evidence" }],
+        filesChanged: ["relative/path"],
+        risks: ["remaining risk"],
+        followUpTaskSuggestions: ["optional follow-up"],
+        producedAt: "canonical ISO-8601 timestamp"
+      }, null, 2),
+      WorkerProtocol.TASK_RESULT_END
+    ].join("\n");
+  }
+
   function install(projectStore = ProjectStore) {
     if (!projectStore || !WorkerProtocol) throw new Error("AutoPrompter task-board dependencies are unavailable.");
     if (projectStore[PATCH_FLAG]) return projectStore[PATCH_FLAG];
@@ -141,9 +235,10 @@
           successorGeneration: 1,
           conversationId: null,
           freshRequestId: `project-task:${dispatchId}:${clock()}`,
-          taskExecutionMode: MODE
+          taskExecutionMode: MODE,
+          dependencyEvidence: dependencyEvidence(task, tasks)
         };
-        dispatch.prompt = WorkerProtocol.buildWorkerPrompt(project, task, dispatch);
+        dispatch.prompt = buildTaskPrompt(project, task, dispatch);
         dispatches[dispatchId] = dispatch;
         task.status = "leased";
         task.attempt = attempt;
@@ -165,6 +260,7 @@
         tasks: clone(tasks),
         dispatches: clone(dispatches),
         assignments,
+        prepared: assignments,
         runtimeSummary: projectStore.summarizeProjectRuntime(store, id)
       };
     };
@@ -193,5 +289,5 @@
   }
 
   const installed = ProjectStore && WorkerProtocol ? install(ProjectStore) : null;
-  return { MODE, freshWorkerId, orderedReadyTasks, install, installed };
+  return { MODE, freshWorkerId, orderedReadyTasks, dependencyEvidence, buildTaskPrompt, install, installed };
 });
