@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 
 global.AutoPrompterProjectStore = require("../project-store.js");
 global.AutoPrompterRepositoryBootstrap = require("../repository-bootstrap.js");
+global.AutoPrompterRepositoryBootstrapScope = require("../repository-bootstrap-scope.js");
 global.AutoPrompterProjectActionProtocol = require("../project-action-protocol.js");
 const FullAuto = require("../project-full-auto.js");
 
@@ -58,6 +59,8 @@ test("repository setup actions are ready after plan approval and merge actions w
   const beforeStore = store();
   const before = FullAuto.actionDefinitions(beforeStore, beforeStore.projects.project);
   assert.deepEqual(before.map(item => item.action), ["modify_workflow", "change_permissions"]);
+  assert.equal(before[0].target, global.AutoPrompterRepositoryBootstrapScope.BUNDLE_TARGET);
+  for (const path of global.AutoPrompterRepositoryBootstrapScope.BUNDLE_PATHS) assert.match(before[0].target, new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 
   const integratedStore = store({ integrated: true });
   const after = FullAuto.actionDefinitions(integratedStore, integratedStore.projects.project);
