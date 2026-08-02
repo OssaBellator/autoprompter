@@ -138,5 +138,5 @@ test("extension manifest loads the planner compiler entry point", () => {
 
   assert.equal(manifest.background.service_worker, "background-entry.js");
   assert.match(entry, /importScripts\("background\.js", "planner-compiler\.js"\)/);
-  assert.equal(manifest.version, "3.1.0");
+  assert.equal(manifest.version, "3.2.0");
 });
