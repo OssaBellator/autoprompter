@@ -81,6 +81,31 @@
     return unlocked;
   }
 
+  function bindIssueDispatchMode(prepared, projectId) {
+    const tasks = prepared.store.tasksByProject?.[projectId] || {};
+    const dispatches = prepared.store.dispatchesByProject?.[projectId] || {};
+    for (const assignment of prepared.assignments || []) {
+      const dispatch = dispatches[assignment.dispatchId];
+      const task = dispatch && tasks[dispatch.taskId];
+      if (!dispatch || !task) continue;
+      if (task.workerConversationId) {
+        dispatch.workerChatId = task.workerConversationId;
+        dispatch.conversationId = task.workerConversationId;
+        dispatch.freshRequestId = null;
+        dispatch.successorGeneration = 0;
+        if (task.lease) task.lease.workerChatId = task.workerConversationId;
+      } else {
+        dispatch.successorGeneration = Math.max(1, Number(dispatch.successorGeneration || 0));
+        dispatch.originalDispatchId = dispatch.originalDispatchId || dispatch.dispatchId;
+      }
+    }
+    prepared.tasks = clone(tasks);
+    prepared.dispatches = clone(dispatches);
+    prepared.assignments = (prepared.assignments || []).map(item => clone(dispatches[item.dispatchId] || item));
+    prepared.prepared = clone(prepared.assignments);
+    return prepared;
+  }
+
   function install(projectStore = ProjectStore) {
     if (!projectStore?.migrateStore || !projectStore?.prepareProjectDispatches || !projectStore?.submitProjectReview) {
       throw new Error("GitHub issue persistence dependencies are unavailable.");
@@ -105,6 +130,7 @@
         prepared.project.taskExecutionMode = MODE;
         prepared.project.roles.integratorChatId = null;
         prepared.store.projects[projectId] = clone(prepared.project);
+        bindIssueDispatchMode(prepared, projectId);
       }
       return prepared;
     };
@@ -139,6 +165,7 @@
     markMode,
     dependenciesAccepted,
     unlockMergedDependencies,
+    bindIssueDispatchMode,
     install
   };
 });
