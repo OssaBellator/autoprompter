@@ -131,18 +131,20 @@ test("cyclic and unknown proposal dependencies are repaired locally with diagnos
   assert.ok(compiled.diagnostics.some(item => item.code === "PLAN_DEPENDENCY_IGNORED"));
 });
 
-test("extension manifest loads planner recovery and parallel task policies", () => {
+test("extension manifest loads the GitHub issue and pull request runtime", () => {
   const root = path.join(__dirname, "..");
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
   const entry = fs.readFileSync(path.join(root, "background-entry.js"), "utf8");
 
   assert.equal(manifest.background.service_worker, "background-entry.js");
   assert.match(entry, /background-project-api\.js/);
-  assert.match(entry, /planner-fallback\.js/);
-  assert.match(entry, /planner-parallel-policy\.js/);
-  assert.match(entry, /project-fresh-capacity\.js/);
+  assert.match(entry, /project-github-bootstrap\.js/);
+  assert.match(entry, /project-github-workflow\.js/);
+  assert.match(entry, /project-github-persistence\.js/);
+  assert.match(entry, /project-github-dispatch\.js/);
+  assert.match(entry, /autocontinue-unlimited-retries\.js/);
   assert.match(entry, /AutoPrompterProjectPlanRecovery\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectTaskBoardController\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectRoleKick\.start\(\)/);
-  assert.equal(manifest.version, "3.4.3");
+  assert.equal(manifest.version, "4.0.0");
 });
