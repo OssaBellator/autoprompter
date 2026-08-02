@@ -9,7 +9,8 @@ importScripts(
   "project-auto-store.js",
   "project-admin.js",
   "project-task-board.js",
-  "project-fresh-dispatch.js"
+  "project-fresh-dispatch.js",
+  "project-auto-bootstrap.js"
 );
 importScripts(
   "project-orchestrator.js",
@@ -26,6 +27,7 @@ if (
   || !globalThis.AutoPrompterProjectAdmin
   || !globalThis.AutoPrompterProjectTaskBoard
   || !globalThis.AutoPrompterProjectFreshDispatch
+  || !globalThis.AutoPrompterProjectAutoBootstrap
   || !globalThis.AutoPrompterProjectStore
   || !globalThis.AutoPrompterProjectOrchestrator
   || !globalThis.AutoPrompterProjectTaskBoardController
@@ -42,4 +44,5 @@ globalThis.AutoPrompterProjectTaskBoard.install(globalThis.AutoPrompterProjectSt
 globalThis.AutoPrompterProjectAdmin.start();
 globalThis.AutoPrompterProjectOrchestrator.start();
 globalThis.AutoPrompterProjectTaskBoardController.start();
+globalThis.AutoPrompterProjectAutoBootstrap.start();
 globalThis.AutoPrompterBootstrapUpgrade.start();
