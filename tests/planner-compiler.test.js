@@ -146,5 +146,5 @@ test("extension manifest loads the GitHub issue and pull request runtime", () =>
   assert.match(entry, /AutoPrompterProjectPlanRecovery\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectTaskBoardController\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectRoleKick\.start\(\)/);
-  assert.equal(manifest.version, "4.0.0");
+  assert.equal(manifest.version, "4.0.1");
 });
