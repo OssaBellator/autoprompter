@@ -1,0 +1,39 @@
+name: Apply composer and Project Mode tabs fix
+
+on:
+  push:
+    branches:
+      - fix/composer-rerender-project-tabs
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Apply guarded source transformations
+        run: node scripts/apply-composer-project-tabs-fix.js
+      - name: Validate source and tests
+        run: |
+          npm test
+          npm run check
+      - name: Remove one-time patch machinery
+        run: |
+          rm scripts/apply-composer-project-tabs-fix.js
+          rm .github/workflows/apply-composer-project-tabs-fix.yml
+      - name: Commit generated fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Fix Project Mode composer submission and split project views"
+          git push origin HEAD:fix/composer-rerender-project-tabs
