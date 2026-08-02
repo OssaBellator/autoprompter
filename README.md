@@ -1,45 +1,50 @@
 # AutoPrompter for ChatGPT
 
-Current release: **3.0.0**
+Current release: **4.0.0**
 
-- Detects ChatGPT’s current maximum-length notice and opens a best-effort successor even when no repository checkpoint exists.
+AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that coordinates work through ChatGPT Web. It does not call an inference API and it does not store a GitHub token.
 
-AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that runs selected ChatGPT conversations concurrently using one inactive managed tab per chat. Initial workers synchronize at a readiness barrier and receive zero-delay jobs together, avoiding independent background-tab delay timers that can drift under browser throttling. Each chat independently queues its next follow-up as soon as its current response completes. It can notify you when work prompts complete and, when explicitly configured, create successor chats from verified Git repository checkpoints.
+## GitHub Issue and Pull Request Mode
 
-- Chats are displayed in the same most-recent-first order as the ChatGPT sidebar.
-- The ↗ control can start a selected legacy goal in a new chat immediately.
-- Real context-limit interruptions fall back to a best-effort fresh chat when a verified continuity checkpoint cannot be created.
-- While a run is active, the selection UI is replaced by a collapsible progress view containing only the selected chats.
+Project Mode is GitHub-native:
 
-## Features
+1. A dedicated planner chat inspects the repository with a connected, write-capable GitHub plugin or tool.
+2. The planner creates real GitHub issues for the independently executable units of work.
+3. AutoPrompter opens one persistent ChatGPT worker conversation for each ready issue.
+4. Each worker reads its issue, creates or updates one branch, and opens one pull request.
+5. A single combined reviewer/merger chat evaluates the issue, pull request, diff, commits, comments, and checks.
+6. When the pull request is ready, the reviewer/merger merges that exact pull request and verifies the resulting default-branch commit and closed issue.
+7. When changes are needed, the reviewer/merger posts actionable feedback on GitHub, leaves the pull request open, and returns the issue to the same persistent worker conversation.
+8. Issues that depend on other issues remain blocked until the prerequisite pull requests are verified as merged.
 
-- Discover chats currently loaded in the ChatGPT sidebar.
-- Launch up to 12 selected conversations concurrently, using one isolated inactive managed tab per chat.
-- Submit the initial selected-chat batch together after all worker pages report ready; later follow-ups still advance independently as each chat completes.
-- Apply the configured delay between follow-ups, not before the first concurrent batch.
-- Configurable work prompt, delay, and per-goal work-prompt limit.
-- Browser notifications for prompt completion, scheduler completion, errors, and handoffs.
-- Conservative response-completion and composer-ownership checks.
-- Approximate visible-context monitoring with a configurable capacity and rollover threshold.
-- Optional repository checkpoints before and after work.
-- Verified successor chats when a repository checkpoint is available, plus best-effort fresh-chat recovery for actual context-limit failures that occur before a checkpoint can be created.
-- Incremental durability instructions that ask the selected repository tool to commit completed logical units before lengthy or risky work continues.
-- Default-on automatic circuit breaker for rate limits, account restrictions, and safety blocks, with an explicit disable option for false-positive troubleshooting.
-- Project Mode automatically creates or initializes planner, reviewer, and integrator chats, submits the planner prompt, repairs malformed planner JSON up to three times, validates and approves only schema-safe plans, starts the local project, and prepares worker assignments. Worker dispatch still requires manual model verification; merge, release, workflow, permission, and other external actions remain approval-gated.
+GitHub issues and pull requests are the durable task state. The extension keeps local orchestration records for tab identity, status, and recovery, but it no longer treats a separate local task DAG or final integrator stage as the source of truth.
 
+### Required GitHub capability
 
-## Autonomous Project Mode bootstrap
+The planner, issue workers, and reviewer/merger require a connected GitHub plugin, MCP server, Codex environment, or other repository tool that can perform the requested writes.
 
-Creating a project draft now starts a durable browser-backed bootstrap pipeline:
+The extension itself:
 
-1. Leave planner, reviewer, and integrator selectors on **Create automatically**, or select existing chats to reuse.
-2. AutoPrompter opens one inactive ChatGPT Web tab for each role and initializes it with a bounded role prompt.
-3. The planner prompt is submitted automatically in the planner chat.
-4. The returned envelope is parsed and schema-validated. Malformed JSON or schema violations trigger up to three correction prompts in the same planner chat; no manual copy/paste is required.
-5. Only a valid plan is approved. When worker chats are available, the project is started locally and its first bounded assignment wave is prepared automatically.
-6. Sending worker assignments still requires the user to verify the selected model in each worker chat. AutoPrompter does not automate model selection or bypass platform limits.
+- has no GitHub host permission;
+- does not authenticate directly to GitHub;
+- does not store a personal access token;
+- cannot bypass platform confirmation or a repository tool's safety checks;
+- validates the issue and pull-request identities returned by the ChatGPT agent before advancing local state.
 
-The role chats use the model ChatGPT selects for a new conversation or the model already configured in a reused conversation. Manual planner controls remain available as a recovery path, and **Run automatic bootstrap** can retry a saved draft after a transient failure.
+A read-only GitHub connector is insufficient for issue creation, branches, commits, pull requests, review comments, or merges.
+
+## Normal AutoContinue
+
+AutoPrompter can still run selected ChatGPT conversations concurrently and submit a configured follow-up prompt as each conversation completes.
+
+A recoverable `Connection interrupted. Waiting for the complete answer` event now queues the same-chat continuation without a fixed consecutive retry ceiling. The retry counter remains visible for diagnostics, but it no longer stops the chat after three interruptions.
+
+This does not weaken the other controls:
+
+- explicit user stop still stops the run;
+- rate-limit, account-restriction, and safety notices still activate the circuit breaker when enabled;
+- context-limit and prolonged-stall handling still use the configured successor-chat and repository-continuity rules;
+- the completed-work prompt limit remains configurable.
 
 ## Install in Edge
 
@@ -48,90 +53,31 @@ The role chats use the model ChatGPT selects for a new conversation or the model
 3. Enable **Developer mode**.
 4. Choose **Load unpacked**.
 5. Select the repository folder.
-6. Reload any open ChatGPT page.
+6. Reload open ChatGPT tabs after every extension update.
 
-## Select chats
+## Start a GitHub issue project
 
-1. Open ChatGPT in a normal tab.
-2. Scroll the sidebar so the conversations you need are loaded.
-3. Open AutoPrompter and press **Refresh**.
-4. Select the conversations.
-5. For a legacy or already-full conversation, press its **↗** control to start the goal in a new chat immediately.
-6. Configure the work prompt and limits.
-7. Press **Start all selected**. The picker is replaced by a collapsible progress panel containing only the selected chats while the run is active.
+1. Open ChatGPT and make sure the required GitHub write-capable tool is connected and authorized for the repository.
+2. Open AutoPrompter and expand **GitHub Issue and Pull Request Mode**.
+3. Enter the project title, goal, and `owner/repository` value.
+4. Leave the planner and pull-request reviewer/merger selectors on **Create automatically**, or bind separate existing chats.
+5. Create the project.
 
-The sidebar is virtualized, so the extension can discover only links present in the current page DOM. Repeatedly scroll and refresh to expand the saved local catalog.
+The planner creates the issues. Ready issues then receive persistent worker chats automatically. The combined reviewer/merger processes pull requests one at a time and either merges or posts feedback.
 
-## Per-chat settings and continuity initialization
+## Safety boundaries
 
-Each selected conversation can override the global follow-up prompt, GitHub repository, continuity file, plugin/tool instruction, and whether continuity is enabled. Open **Per-chat prompt and repository overrides** and choose a selected chat. Draft changes autosave while typing and are flushed before switching chats or starting a run. Blank fields inherit the global settings.
-
-Use **Initialize continuity** to send one purpose-built initialization prompt to every selected chat. Each chat uses its effective repository settings, creates or reconciles the continuity file, commits and pushes it through the configured action-capable tool, and must return an `AUTOPROMPTER_CHECKPOINT` marker. Initialization does not run the normal repeated work prompt.
-
-## Circuit-breaker matching
-
-Restriction detection is intentionally exact and UI-scoped. Normal assistant prose that merely discusses rate limits, account restrictions, or safety controls does not activate the circuit breaker. Actual trusted notice containers and short assistant/system messages matching documented restriction wording still stop the scheduler. The popup includes **Disable automatic circuit breaker**, which is off by default and can be enabled when troubleshooting detector false positives. Disabling it affects only AutoPrompter's heuristic detector; it does not bypass ChatGPT controls.
-
-## Concurrent scheduling
-
-AutoPrompter opens one inactive managed tab for every selected chat, up to 12 chats per run. Initial prompts are launched together. Afterward, each chat advances independently: whichever response finishes first receives its next follow-up first, while slower chats continue working without blocking the queue.
-
-Initial prompts are dispatched together after a readiness barrier. A slow worker is released after a five-second grace period so it cannot block the whole batch. Concurrent prompting can consume account allowances faster and can make rate-limit notices more likely. Use a conservative delay, keep the selected batch small, and leave the automatic circuit breaker enabled unless false positives require disabling it. Inactive tabs may also be throttled by the browser.
-
-## Notifications
-
-The extension requests the browser `notifications` permission. Notifications can be enabled globally and separately for each completed work prompt. A final notification is also sent when a run finishes or is stopped by an intervention.
+- Planner, worker, and reviewer/merger chats must be distinct roles.
+- Workers do not merge their own pull requests.
+- The reviewer/merger is scoped to the exact pull request assigned by AutoPrompter.
+- A merge result must include a verified merge commit and closed issue.
+- A changes-requested result must leave the pull request and issue open and include feedback already posted on GitHub.
+- Claims returned by a model or repository tool are validated structurally, but the extension is not an independent cryptographic verifier of GitHub state.
+- Browser DOM changes, inactive-tab throttling, plugin availability, and platform safety controls can still interrupt automation.
 
 ## Repository continuity
 
-Repository continuity is optional and disabled by default.
-
-1. Enable **Verified repository handoffs**.
-2. Enter a GitHub repository as `owner/repository`.
-3. Choose a continuity file, normally `AUTOPROMPTER_HANDOFF.md`.
-4. Provide an instruction for an action-capable repository tool.
-5. Configure the estimated context capacity, rollover threshold, and stall timeout.
-6. Keep pre-work and post-work checkpoints enabled for the strongest recovery behavior.
-
-Each checkpoint prompt asks ChatGPT to commit completed work, update the continuity file, verify the remote commit, and return a marker:
-
-```text
-AUTOPROMPTER_CHECKPOINT: <commit-sha-or-immutable-ref>
-```
-
-A context handoff uses:
-
-```text
-AUTOPROMPTER_HANDOFF_READY: <commit-sha-or-immutable-ref>
-```
-
-The extension checks for the marker but cannot independently prove that a model or plugin performed the Git operation. Use an action-capable tool with least-privilege repository access. The standard read-only GitHub app cannot push changes; Codex or a purpose-built action-capable plugin/app is required for writes.
-
-## Context estimation
-
-ChatGPT does not expose a stable browser API for exact per-conversation context consumption. AutoPrompter estimates tokens from visible user and assistant text and compares the estimate with the capacity you configure. Attachments, hidden instructions, tool results, model-specific accounting, summarization, and unloaded messages can make the estimate inaccurate. Treat the threshold as an early-warning heuristic, not a precise meter.
-
-## Guardrails and interruptions
-
-AutoPrompter classifies visible interruption messages conservatively:
-
-- **Context limit:** use a verified repository handoff when possible. The detector includes `You’ve reached the maximum length for this conversation, but you can keep talking by starting a new chat.` If the context-limit message arrives before a checkpoint can be created, open a best-effort fresh chat using the selected chat title, configured work prompt, and any repository details. The extension explicitly tells the new chat that it cannot see the old transcript.
-- **Recoverable generation interruption:** for `Connection interrupted. Waiting for the complete answer` and the non-selectable `Our systems are thinking a bit more... retry with a faster model` overlay, stop the current generation when possible and queue a same-chat continuation prompt without incrementing completed-work progress. Retries are capped at three consecutive attempts.
-- **Prolonged stall or content removal:** require a verified checkpoint before rollover. Stuck-generation labels—`Thinking…`, `Generating…`, and `Working…`—must persist for the configured stall timeout before rollover.
-- **Suspicious activity, rate limit, temporary account restriction, or safety block:** stop the whole scheduler and notify the user. Documented restriction variants include `We detect suspicious activity.`, `Unusual Activity Detected`, `Unusual activity has been detected from your device. Try again later`, and `Sorry, you have been blocked`.
-- **Missing checkpoint:** stop and request manual review rather than opening a successor with guessed state.
-
-The extension intentionally does not rotate chats, models, accounts, or endpoints to evade a platform restriction.
-
-## Message usage
-
-With repository continuity enabled, one work cycle can use up to three messages:
-
-1. pre-work checkpoint
-2. work prompt
-3. post-work checkpoint
-
-This improves recovery but consumes allowances faster. Use a reasonable delay, low work-prompt limit, and the circuit breaker. Do not use the extension for unattended high-volume extraction or as a third-party service.
+Repository continuity remains optional for normal AutoContinue. When enabled, checkpoint and successor prompts ask the configured repository tool to commit completed work and return a verified repository marker. Context usage is estimated from visible page text and is not an exact tokenizer measurement.
 
 ## Development
 
@@ -142,27 +88,8 @@ npm test
 npm run check
 ```
 
-The tests cover URL and repository validation, scheduler eligibility, successor prompt construction, context rollover, marker parsing, guardrail classification, verified fresh-chat creation, and connection-interruption retry behavior.
-
-## Future architecture
-
-See [`docs/MULTI_AGENT_ROADMAP.md`](docs/MULTI_AGENT_ROADMAP.md) for the remaining web-first orchestration roadmap. Model-picker automation remains intentionally excluded; role and worker chats use the current ChatGPT Web model configuration.
-
-## Known limitations
-
-- ChatGPT DOM changes can break selectors.
-- Hidden/inactive managed tabs may be throttled by the browser, especially when many chats run concurrently.
-- Context and guardrail detection are heuristic.
-- Notification delivery depends on browser and operating-system settings.
-- Plugin availability and capabilities vary by plan, workspace, region, and product surface.
-- A marker is an assistant/tool claim, not cryptographic verification by this extension.
+The test suite covers scheduler behavior, ChatGPT DOM guardrails, GitHub issue-manifest validation, persistent issue workers, pull-request review and merge transitions, dependency unlocking after merges, and unlimited recoverable connection-interruption retries.
 
 ## License
 
 Apache-2.0. See [`LICENSE`](LICENSE).
-
-## Connection interruption recovery
-
-When ChatGPT shows `Connection interrupted. Waiting for the complete answer`, AutoPrompter stops the interrupted generation when a stop control is available and queues `Continue from where the response was interrupted. Do not repeat completed material.` for that chat. The retry does not increment the completed-work counter and is limited to three consecutive attempts.
-
-Fresh-start workers click ChatGPT's New chat control when the site restores an older `/c/<id>` route, wait for an empty conversation surface, and reject any successor whose conversation ID matches its parent.
