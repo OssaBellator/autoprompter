@@ -8,12 +8,33 @@
     return document.getElementById(id);
   }
 
+  function installStyles() {
+    if (element("projectAutomationStyles")) return;
+    const style = document.createElement("style");
+    style.id = "projectAutomationStyles";
+    style.textContent = [
+      ".project-automation-card{display:grid;gap:8px;margin-top:12px;padding:12px;border:1px solid var(--border,#d0d7de);border-radius:10px}",
+      ".project-automation-card>strong{grid-column:1}",
+      ".project-automation-card>.project-status-badge{grid-column:2;justify-self:end}",
+      ".project-automation-card>small,.project-automation-actions,.project-automation-card>button{grid-column:1/-1}",
+      ".project-automation-actions{display:grid;gap:6px}",
+      ".project-automation-row{display:grid;gap:2px;padding:7px 0;border-top:1px solid var(--border,#d0d7de)}",
+      ".project-automation-row:first-child{border-top:0}",
+      ".project-automation-row small{overflow-wrap:anywhere}",
+      ".project-advanced-panel{margin-top:12px}",
+      ".project-advanced-panel>summary{cursor:pointer;font-weight:600}",
+      ".project-advanced-panel:not([open]){padding-bottom:2px}"
+    ].join("");
+    document.head.append(style);
+  }
+
   function setupLayout() {
     const existingPanel = element("projectExistingPanel");
     const statusCard = element("projectStatusCard");
     const planner = element("plannerWorkbench");
     const workers = element("workerWorkbench");
     if (!existingPanel || !statusCard || !planner || !workers || element("projectAdvancedPanel")) return;
+    installStyles();
 
     const hint = existingPanel.querySelector(":scope > .hint");
     if (hint) hint.textContent = "Select a saved project. Planning, worker dispatch, independent review, integration approval, workflow setup, merge, and release actions advance automatically.";
