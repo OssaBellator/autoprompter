@@ -60,5 +60,5 @@ test("service worker loads GitHub issue bootstrap ownership and planner recovery
   assert.match(entry, /AutoPrompterProjectPlanRecovery\.start\(\)/);
   assert.match(api, /bootstrapStarts/);
   assert.match(api, /startBootstrapOnce/);
-  assert.equal(manifest.version, "4.0.2");
+  assert.equal(manifest.version, "4.0.3");
 });
