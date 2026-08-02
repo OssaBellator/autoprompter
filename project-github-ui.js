@@ -1,82 +1,137 @@
-(() => {
-  "use strict";
+"use strict";
 
-  if (typeof document === "undefined") return;
-  let applying = false;
+(function attachGitHubProjectUi(root, factory) {
+  const api = factory(root);
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  root.AutoPrompterGitHubProjectUi = api;
+})(typeof globalThis !== "undefined" ? globalThis : self, root => {
+  const MAX_APPLY_ATTEMPTS = 20;
+  const APPLY_RETRY_MS = 50;
+  let started = false;
 
-  function text(selector, value) {
-    const node = document.querySelector(selector);
-    if (node && node.textContent !== value) node.textContent = value;
+  function setText(node, value) {
+    if (!node || node.textContent === value) return false;
+    node.textContent = value;
+    return true;
   }
 
-  function hide(selector) {
-    const node = document.querySelector(selector);
-    if (node) node.hidden = true;
+  function setHidden(node, value = true) {
+    if (!node || node.hidden === value) return false;
+    node.hidden = value;
+    return true;
   }
 
-  function labelText(controlId, value) {
-    const control = document.getElementById(controlId);
-    const label = control?.closest("label");
-    if (!label) return;
-    let caption = label.querySelector(":scope > .github-mode-caption");
+  function queryText(documentApi, selector, value) {
+    return setText(documentApi.querySelector(selector), value);
+  }
+
+  function hide(documentApi, selector) {
+    return setHidden(documentApi.querySelector(selector), true);
+  }
+
+  function labelText(documentApi, controlId, value) {
+    const control = documentApi.getElementById(controlId);
+    const label = control?.closest?.("label");
+    if (!label) return false;
+    let changed = false;
+    let caption = label.querySelector?.(":scope > .github-mode-caption");
     if (!caption) {
-      caption = document.createElement("span");
+      caption = documentApi.createElement("span");
       caption.className = "github-mode-caption";
       label.prepend(caption);
+      changed = true;
     }
-    caption.textContent = value;
-    for (const node of [...label.childNodes]) {
-      if (node === caption || node === control || node.nodeType !== Node.TEXT_NODE) continue;
+    changed = setText(caption, value) || changed;
+    for (const node of [...(label.childNodes || [])]) {
+      if (node === caption || node === control || node.nodeType !== 3 || node.textContent === "") continue;
       node.textContent = "";
+      changed = true;
     }
+    return changed;
   }
 
-  function addModeNote() {
-    const panel = document.getElementById("projectNewPanel");
-    if (!panel || document.getElementById("githubIssueModeNote")) return;
-    const note = document.createElement("p");
+  function addModeNote(documentApi) {
+    const panel = documentApi.getElementById("projectNewPanel");
+    if (!panel || documentApi.getElementById("githubIssueModeNote")) return false;
+    const note = documentApi.createElement("p");
     note.id = "githubIssueModeNote";
     note.className = "hint";
     note.textContent = "The planner creates real GitHub issues with the connected write-capable plugin. AutoPrompter opens one persistent worker chat per ready issue. The combined reviewer/merger inspects each pull request, merges it when ready, or posts feedback and returns the same issue to its worker chat.";
     panel.insertBefore(note, panel.firstElementChild?.nextSibling || panel.firstChild);
+    return true;
   }
 
-  function apply() {
-    if (applying) return;
-    applying = true;
-    try {
-      const integrator = document.getElementById("projectIntegratorChat");
-      if (integrator?.closest("label")) integrator.closest("label").hidden = true;
-      hide(".integration-workbench");
-      hide(".approval-workbench");
-      hide(".reconciliation-workbench");
+  function apply(documentApi = root.document) {
+    if (!documentApi?.getElementById || !documentApi?.querySelector) return false;
 
-      labelText("projectReviewerChat", "Pull-request reviewer and merger chat");
-      text("#projectModePanel > summary", "GitHub Issue and Pull Request Mode");
-      text("#projectNewPanel > .hint", "Create a GitHub-native project. The planner and combined pull-request reviewer/merger can be created automatically or bound to existing chats.");
-      text("#projectWorkerHint", "Worker chats are created automatically—one persistent ChatGPT conversation for each ready GitHub issue.");
-      text("#createProject", "Create GitHub issue project");
-      text("#plannerWorkbench > strong", "GitHub issue planner");
-      text("#plannerWorkbench > .hint", "The planner uses the connected GitHub plugin to create real issues, then returns their verified issue numbers and URLs. Manual controls remain only for recovery.");
-      text("#workerWorkbench > strong", "Issue workers and pull-request review");
-      text("#workerWorkbench > .hint", "Each ready issue receives a persistent worker chat. A worker creates or updates one pull request; the combined reviewer/merger either merges it or posts feedback and returns it to the same chat.");
-      text("#projectAutomationCard > strong", "GitHub issue and pull request board");
-      text("#projectAutomationBadge", "Issue → PR → review/merge");
+    const integrator = documentApi.getElementById("projectIntegratorChat");
+    setHidden(integrator?.closest?.("label"), true);
+    hide(documentApi, ".integration-workbench");
+    hide(documentApi, ".approval-workbench");
+    hide(documentApi, ".reconciliation-workbench");
 
-      const plannerInput = document.getElementById("plannerResponseInput");
-      if (plannerInput) plannerInput.placeholder = "AUTOPROMPTER_ISSUES_BEGIN\n{ ... verified GitHub issues ... }\nAUTOPROMPTER_ISSUES_END";
-      const resultInput = document.getElementById("projectResultInput");
-      if (resultInput) resultInput.placeholder = "AUTOPROMPTER_ISSUE_WORK_BEGIN\n{ ... open pull request ... }\nAUTOPROMPTER_ISSUE_WORK_END";
-      const reviewInput = document.getElementById("projectReviewInput");
-      if (reviewInput) reviewInput.placeholder = "AUTOPROMPTER_PR_REVIEW_BEGIN\n{ ... merged or changes requested ... }\nAUTOPROMPTER_PR_REVIEW_END";
-      addModeNote();
-    } finally {
-      applying = false;
+    labelText(documentApi, "projectReviewerChat", "Pull-request reviewer and merger chat");
+    queryText(documentApi, "#projectModePanel > summary", "GitHub Issue and Pull Request Mode");
+    queryText(documentApi, "#projectNewPanel > .hint", "Create a GitHub-native project. The planner and combined pull-request reviewer/merger can be created automatically or bound to existing chats.");
+    queryText(documentApi, "#projectWorkerHint", "Worker chats are created automatically—one persistent ChatGPT conversation for each ready GitHub issue.");
+    queryText(documentApi, "#createProject", "Create GitHub issue project");
+    queryText(documentApi, "#plannerWorkbench > strong", "GitHub issue planner");
+    queryText(documentApi, "#plannerWorkbench > .hint", "The planner uses the connected GitHub plugin to create real issues, then returns their verified issue numbers and URLs. Manual controls remain only for recovery.");
+    queryText(documentApi, "#workerWorkbench > strong", "Issue workers and pull-request review");
+    queryText(documentApi, "#workerWorkbench > .hint", "Each ready issue receives a persistent worker chat. A worker creates or updates one pull request; the combined reviewer/merger either merges it or posts feedback and returns it to the same chat.");
+    queryText(documentApi, "#projectAutomationCard > strong", "GitHub issue and pull request board");
+    queryText(documentApi, "#projectAutomationBadge", "Issue → PR → review/merge");
+
+    const plannerInput = documentApi.getElementById("plannerResponseInput");
+    if (plannerInput && plannerInput.placeholder !== "AUTOPROMPTER_ISSUES_BEGIN\n{ ... verified GitHub issues ... }\nAUTOPROMPTER_ISSUES_END") {
+      plannerInput.placeholder = "AUTOPROMPTER_ISSUES_BEGIN\n{ ... verified GitHub issues ... }\nAUTOPROMPTER_ISSUES_END";
     }
+    const resultInput = documentApi.getElementById("projectResultInput");
+    if (resultInput && resultInput.placeholder !== "AUTOPROMPTER_ISSUE_WORK_BEGIN\n{ ... open pull request ... }\nAUTOPROMPTER_ISSUE_WORK_END") {
+      resultInput.placeholder = "AUTOPROMPTER_ISSUE_WORK_BEGIN\n{ ... open pull request ... }\nAUTOPROMPTER_ISSUE_WORK_END";
+    }
+    const reviewInput = documentApi.getElementById("projectReviewInput");
+    if (reviewInput && reviewInput.placeholder !== "AUTOPROMPTER_PR_REVIEW_BEGIN\n{ ... merged or changes requested ... }\nAUTOPROMPTER_PR_REVIEW_END") {
+      reviewInput.placeholder = "AUTOPROMPTER_PR_REVIEW_BEGIN\n{ ... merged or changes requested ... }\nAUTOPROMPTER_PR_REVIEW_END";
+    }
+    addModeNote(documentApi);
+
+    return Boolean(
+      documentApi.getElementById("projectModePanel")
+      && documentApi.getElementById("projectNewPanel")
+      && documentApi.getElementById("projectAutomationCard")
+    );
   }
 
-  const observer = new MutationObserver(apply);
-  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", apply, { once: true });
-  else apply();
-})();
+  function start(documentApi = root.document, timerApi = root) {
+    if (started || !documentApi) return false;
+    started = true;
+    let attempts = 0;
+
+    const run = () => {
+      attempts += 1;
+      const ready = apply(documentApi);
+      if (!ready && attempts < MAX_APPLY_ATTEMPTS) timerApi.setTimeout(run, APPLY_RETRY_MS);
+    };
+
+    if (documentApi.readyState === "loading") {
+      documentApi.addEventListener("DOMContentLoaded", run, { once: true });
+    } else {
+      run();
+    }
+    return true;
+  }
+
+  if (root.document) start(root.document, root);
+
+  return {
+    MAX_APPLY_ATTEMPTS,
+    APPLY_RETRY_MS,
+    setText,
+    setHidden,
+    labelText,
+    addModeNote,
+    apply,
+    start
+  };
+});
