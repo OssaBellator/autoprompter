@@ -7,14 +7,13 @@ importScripts(
   "planner-fallback.js",
   "planner-no-repair.js",
   "project-auto-store.js",
-  "project-admin.js"
+  "project-admin.js",
+  "project-task-board.js",
+  "project-fresh-dispatch.js"
 );
 importScripts(
-  "repository-bootstrap.js",
-  "repository-bootstrap-scope.js",
-  "project-action-protocol.js",
   "project-orchestrator.js",
-  "project-full-auto.js",
+  "project-task-board-controller.js",
   "bootstrap-upgrade.js"
 );
 
@@ -25,22 +24,22 @@ if (
   || !globalThis.AutoPrompterPlannerNoRepair
   || !globalThis.AutoPrompterProjectAutoStore
   || !globalThis.AutoPrompterProjectAdmin
+  || !globalThis.AutoPrompterProjectTaskBoard
+  || !globalThis.AutoPrompterProjectFreshDispatch
   || !globalThis.AutoPrompterProjectStore
-  || !globalThis.AutoPrompterRepositoryBootstrap
-  || !globalThis.AutoPrompterRepositoryBootstrapScope
-  || !globalThis.AutoPrompterProjectActionProtocol
   || !globalThis.AutoPrompterProjectOrchestrator
-  || !globalThis.AutoPrompterProjectFullAuto
+  || !globalThis.AutoPrompterProjectTaskBoardController
   || !globalThis.AutoPrompterBootstrapUpgrade
 ) {
-  throw new Error("AutoPrompter full-auto Project Mode runtime failed to initialize.");
+  throw new Error("AutoPrompter task-board Project Mode runtime failed to initialize.");
 }
 
 globalThis.AutoPrompterPlannerCompiler.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterPlannerFallback.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterPlannerNoRepair.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterProjectAutoStore.install(globalThis.AutoPrompterProjectStore);
+globalThis.AutoPrompterProjectTaskBoard.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterProjectAdmin.start();
 globalThis.AutoPrompterProjectOrchestrator.start();
-globalThis.AutoPrompterProjectFullAuto.start();
+globalThis.AutoPrompterProjectTaskBoardController.start();
 globalThis.AutoPrompterBootstrapUpgrade.start();
