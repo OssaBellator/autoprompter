@@ -37,14 +37,18 @@ test("resume derives the durable GitHub workflow stage from stored records", () 
   }), "alpha"), "completed");
 });
 
-test("service worker installs stage resume before task-board controllers run", () => {
+test("service worker exposes a dedicated stage-resume listener before task-board controllers run", () => {
   const root = path.join(__dirname, "..");
   const entry = fs.readFileSync(path.join(root, "background-entry.js"), "utf8");
   const source = fs.readFileSync(path.join(root, "project-github-resume.js"), "utf8");
   assert.match(entry, /project-github-resume\.js/);
   assert.match(entry, /AutoPrompterGitHubIssueResume\.install\(\)/);
   assert.ok(entry.indexOf("AutoPrompterGitHubIssueResume.install()") < entry.indexOf("AutoPrompterProjectTaskBoardController.start()"));
-  assert.match(source, /transitionProjectState/);
+  assert.equal(Resume.RESUME_SCOPE, "AUTOPROMPTER_GITHUB_RESUME");
+  assert.equal(Resume.RESUME_TYPE, "RESUME_PROJECT_STAGE");
+  assert.match(source, /startResumeListener/);
+  assert.match(source, /message\?\.scope !== RESUME_SCOPE/);
+  assert.match(source, /transitionGitHubProjectState/);
   assert.match(source, /startProjectBootstrap/);
   assert.match(source, /AutoPrompterProjectTaskBoardController\.reconcile/);
 });
