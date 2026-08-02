@@ -6,9 +6,11 @@ const assert = require("node:assert/strict");
 const ProjectStore = require("../project-store.js");
 const PlannerCompiler = require("../planner-compiler.js");
 const PlannerFallback = require("../planner-fallback.js");
+const PlannerNoRepair = require("../planner-no-repair.js");
 
 PlannerCompiler.install(ProjectStore);
 PlannerFallback.install(ProjectStore);
+PlannerNoRepair.install(ProjectStore);
 
 const CLOCK_MS = Date.parse("2026-08-02T03:30:00.000Z");
 const clock = () => CLOCK_MS;
@@ -54,6 +56,24 @@ test("planner bullet text becomes bounded sequential tasks with a final verifica
   assert.ok(result.pendingPlan.tasks.length >= 4);
   assert.equal(result.pendingPlan.tasks.at(-1).role, "testing");
   assert.ok(result.pendingPlan.tasks.every(task => task.allowedPaths.includes("**/*")));
+});
+
+test("semantic planner validation errors recover locally instead of reaching the legacy repair state", () => {
+  const store = projectStore();
+  const output = [
+    PlannerCompiler.PROPOSAL_BEGIN,
+    JSON.stringify({
+      schemaVersion: "1.0",
+      summary: "This proposal has no tasks and is semantically invalid.",
+      tasks: []
+    }),
+    PlannerCompiler.PROPOSAL_END
+  ].join("\n");
+
+  const result = ProjectStore.submitProjectPlannerOutput(store, "full-auto-project", output, clock);
+  assert.equal(result.plannerCompilation.mode, "compiled-local-recovery");
+  assert.ok(result.plannerCompilation.diagnostics.some(item => item.code === "PLAN_VALIDATION_RECOVERED_LOCALLY"));
+  assert.ok(result.pendingPlan.tasks.length >= 3);
 });
 
 test("valid compact proposals still use the normal deterministic compiler", () => {
