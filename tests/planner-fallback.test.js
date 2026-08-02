@@ -27,7 +27,7 @@ function projectStore() {
   }, clock).store;
 }
 
-test("non-JSON planner prose compiles locally instead of starting a repair loop", () => {
+test("non-JSON planner prose compiles locally into multiple runnable roots", () => {
   const store = projectStore();
   const result = ProjectStore.submitProjectPlannerOutput(
     store,
@@ -40,10 +40,10 @@ test("non-JSON planner prose compiles locally instead of starting a repair loop"
   assert.ok(result.plannerCompilation.diagnostics.some(item => item.code === "PLAN_TEXT_COMPILED_LOCALLY"));
   assert.equal(result.pendingPlan.projectId, "full-auto-project");
   assert.ok(result.pendingPlan.tasks.length >= 3);
-  assert.deepEqual(result.pendingPlan.criticalPath, result.pendingPlan.tasks.map(task => task.id));
+  assert.ok(result.pendingPlan.tasks.filter(task => task.dependencies.length === 0).length >= 2);
 });
 
-test("planner bullet text becomes bounded sequential tasks with a final verification task", () => {
+test("planner bullet text becomes parallel tasks with a dependent verification task", () => {
   const store = projectStore();
   const result = ProjectStore.submitProjectPlannerOutput(store, "full-auto-project", [
     "Plan:",
@@ -54,7 +54,11 @@ test("planner bullet text becomes bounded sequential tasks with a final verifica
 
   assert.equal(result.plannerCompilation.mode, "compiled-local-fallback");
   assert.ok(result.pendingPlan.tasks.length >= 4);
-  assert.equal(result.pendingPlan.tasks.at(-1).role, "testing");
+  const verification = result.pendingPlan.tasks.at(-1);
+  const roots = result.pendingPlan.tasks.slice(0, -1);
+  assert.equal(verification.role, "testing");
+  assert.ok(roots.every(task => task.dependencies.length === 0));
+  assert.deepEqual(new Set(verification.dependencies), new Set(roots.map(task => task.id)));
   assert.ok(result.pendingPlan.tasks.every(task => task.allowedPaths.includes("**/*")));
 });
 
