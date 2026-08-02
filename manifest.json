@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AutoPrompter for ChatGPT",
-  "version": "3.0.0",
-  "description": "Create and coordinate ChatGPT Web multi-agent projects with automatic role chats, planner repair, concurrent workers, reviews, and guarded integration.",
+  "version": "3.1.0",
+  "description": "Create and coordinate ChatGPT Web multi-agent projects with deterministic plan compilation, concurrent workers, independent reviews, and guarded integration.",
   "minimum_chrome_version": "102",
   "permissions": [
     "storage",
@@ -18,7 +18,7 @@
     "default_popup": "popup.html"
   },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background-entry.js"
   },
   "content_scripts": [
     {
