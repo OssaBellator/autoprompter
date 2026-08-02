@@ -29,6 +29,7 @@ jobs:
         run: |
           rm scripts/apply-composer-project-tabs-fix.js
           rm -f .github/workflows/apply-composer-project-tabs-fix.yml
+          rm -f PATCH_TRIGGER.md PATCH_TRIGGER_2.md
           git checkout origin/main -- .github/workflows/test.yml
       - name: Commit generated fix
         run: |
