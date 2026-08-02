@@ -48,13 +48,13 @@
       .slice(0, 80) || fallback;
   }
 
-  function taskFromLine(line, index, previousKey) {
+  function taskFromLine(line, index) {
     const key = slug(line, `task-${index + 1}`);
     return {
       key,
       title: concise(line, `Project task ${index + 1}`, 180),
-      description: `Complete this bounded part of the project goal: ${concise(line, "Implement the required project change.", 1000)}`,
-      dependsOn: previousKey ? [previousKey] : [],
+      description: `Complete this independently executable part of the project goal from the default branch: ${concise(line, "Implement the required project change.", 1000)}`,
+      dependsOn: [],
       role: index === 0 ? "research" : "implementation",
       difficulty: index === 0 ? "small" : "medium",
       modelClass: index === 0 ? "fast" : "standard",
@@ -67,22 +67,17 @@
   function buildFallbackProposal(project, output) {
     const lines = candidateTasks(output);
     if (lines.length >= 2) {
-      let previousKey = "";
-      const tasks = lines.map((line, index) => {
-        const task = taskFromLine(line, index, previousKey);
-        previousKey = task.key;
-        return task;
-      });
+      const tasks = lines.map((line, index) => taskFromLine(line, index));
       tasks.push({
         key: "verify-project-outcome",
-        title: "Verify the project outcome",
-        description: "Run the repository's available checks, inspect the implemented result against the project goal, and record any remaining blockers.",
-        dependsOn: [previousKey],
+        title: "Verify the combined project outcome",
+        description: "After the independent task branches are accepted, run the repository's available checks, inspect the combined result against the project goal, and record any remaining blockers.",
+        dependsOn: tasks.map(task => task.key),
         role: "testing",
         difficulty: "medium",
         modelClass: "standard",
         allowedPaths: ["**/*"],
-        acceptance: ["The project outcome is checked against the goal and supported by repository evidence."],
+        acceptance: ["The combined project outcome is checked against the goal and supported by repository evidence."],
         checks: []
       });
       return {
@@ -99,7 +94,7 @@
         {
           key: "inspect-current-state",
           title: "Inspect the current repository state",
-          description: `Inspect ${project.repository.slug}, identify the code and workflows relevant to the goal, and record the smallest safe implementation path. Goal: ${concise(project.goal, project.title, 3000)}`,
+          description: `Independently inspect ${project.repository.slug}, identify the code and workflows relevant to the goal, and record constraints that the reviewer can use. Goal: ${concise(project.goal, project.title, 3000)}`,
           dependsOn: [],
           role: "research",
           difficulty: "small",
@@ -111,8 +106,8 @@
         {
           key: "implement-project-goal",
           title: "Implement the project goal",
-          description: `Implement the required repository changes for this goal: ${concise(project.goal, project.title, 5000)}`,
-          dependsOn: ["inspect-current-state"],
+          description: `Starting independently from the default branch, inspect what is necessary and implement the required repository changes for this goal: ${concise(project.goal, project.title, 5000)}`,
+          dependsOn: [],
           role: "implementation",
           difficulty: "large",
           modelClass: "deep",
@@ -123,7 +118,7 @@
         {
           key: "verify-project-outcome",
           title: "Verify and document the completed outcome",
-          description: "Run applicable checks, compare the implementation with the project goal, repair regressions, and document any operational steps.",
+          description: "After the implementation branch is accepted, run applicable checks, compare the implementation with the project goal, repair regressions, and document any operational steps.",
           dependsOn: ["implement-project-goal"],
           role: "testing",
           difficulty: "medium",
@@ -173,7 +168,7 @@
             diagnostics: [
               {
                 code: "PLAN_TEXT_COMPILED_LOCALLY",
-                message: "The planner response did not contain usable JSON, so AutoPrompter compiled a bounded task graph locally instead of entering a repair loop."
+                message: "The planner response did not contain usable JSON, so AutoPrompter compiled a bounded parallel task graph locally instead of entering a repair loop."
               },
               ...diagnostics
             ].slice(0, 50)
@@ -182,7 +177,7 @@
       }
     };
 
-    const installed = { originalSubmit, protocol: "compiled-local-fallback-v1" };
+    const installed = { originalSubmit, protocol: "compiled-local-fallback-v2" };
     Object.defineProperty(projectStore, PATCH_FLAG, { value: installed, enumerable: false });
     return installed;
   }

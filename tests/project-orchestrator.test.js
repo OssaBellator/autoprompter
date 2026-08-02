@@ -97,15 +97,17 @@ test("role jobs disable continuity and preserve bounded interruption settings", 
   assert.equal(settings.contextThresholdPercent, 98);
 });
 
-test("extension adapts fresh task, reviewer, and integrator jobs into guarded content runners", () => {
+test("extension adapts task, planner recovery, reviewer, and integrator jobs", () => {
   const root = path.join(__dirname, "..");
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
   const entry = fs.readFileSync(path.join(root, "background-entry.js"), "utf8");
   const roleRunner = fs.readFileSync(path.join(root, "project-role-runner.js"), "utf8");
   const content = fs.readFileSync(path.join(root, "content.js"), "utf8");
+  const capture = fs.readFileSync(path.join(root, "project-plan-capture.js"), "utf8");
   const projectUi = fs.readFileSync(path.join(root, "project-ui.js"), "utf8");
 
-  assert.deepEqual(manifest.content_scripts[0].js.slice(-2), ["project-role-runner.js", "content.js"]);
+  assert.deepEqual(manifest.content_scripts[0].js.slice(-3), ["project-role-runner.js", "content.js", "project-plan-capture.js"]);
+  assert.match(entry, /AutoPrompterProjectPlanRecovery\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectOrchestrator\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectRoleKick\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectTaskBoardController\.start\(\)/);
@@ -118,8 +120,10 @@ test("extension adapts fresh task, reviewer, and integrator jobs into guarded co
   assert.match(roleRunner, /activeJobs\.has\(message\.jobId\)/);
   assert.match(content, /message\.type === "RUN_PROJECT_BOOTSTRAP_JOB"/);
   assert.match(content, /RUN_PROJECT_SUCCESSOR_TASK/);
+  assert.match(capture, /GET_PROJECT_PLANNER_RECOVERY/);
+  assert.match(capture, /PROJECT_BOOTSTRAP_RESULT/);
   assert.match(projectUi, /Advanced recovery and diagnostics/);
   assert.match(projectUi, /projectPickerMenu/);
   assert.match(projectUi, /Branch task board/);
-  assert.equal(manifest.version, "3.4.2");
+  assert.equal(manifest.version, "3.4.3");
 });
