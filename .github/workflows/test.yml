@@ -9,11 +9,12 @@ permissions:
 
 jobs:
   apply-project-composer-fix:
-    if: github.ref == 'refs/heads/fix/composer-rerender-project-tabs' && github.actor != 'github-actions[bot]'
+    if: (github.ref == 'refs/heads/fix/composer-rerender-project-tabs' || github.head_ref == 'fix/composer-rerender-project-tabs') && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: fix/composer-rerender-project-tabs
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
