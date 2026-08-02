@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AutoPrompter for ChatGPT",
-  "version": "4.0.3",
-  "description": "Create or recover GitHub issues with a planner, run temporary issue workers, and review or merge each pull request.",
+  "version": "5.0.0",
+  "description": "Run reliable AutoContinue workflows with per-chat context, successor recovery, and lightweight chat project folders.",
   "minimum_chrome_version": "102",
   "permissions": [
     "storage",
@@ -27,9 +27,7 @@
         "https://chat.openai.com/*"
       ],
       "js": [
-        "project-role-runner.js",
-        "content.js",
-        "project-plan-capture.js"
+        "content.js"
       ],
       "run_at": "document_idle"
     }
