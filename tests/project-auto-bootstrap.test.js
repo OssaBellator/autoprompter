@@ -43,11 +43,18 @@ test("an existing bootstrap record suppresses the watchdog fallback", () => {
   assert.equal(AutoBootstrap.bootstrapAlreadyStarted({}, "alpha"), false);
 });
 
+test("watchdog waits long enough for the popup bootstrap to establish ownership", () => {
+  assert.ok(AutoBootstrap.START_DELAY_MS >= 8000);
+});
+
 test("service worker loads and starts the project bootstrap watchdog", () => {
   const root = path.join(__dirname, "..");
   const entry = fs.readFileSync(path.join(root, "background-entry.js"), "utf8");
+  const api = fs.readFileSync(path.join(root, "background-project-api.js"), "utf8");
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
   assert.match(entry, /project-auto-bootstrap\.js/);
   assert.match(entry, /AutoPrompterProjectAutoBootstrap\.start\(\)/);
-  assert.equal(manifest.version, "3.4.1");
+  assert.match(api, /bootstrapStarts/);
+  assert.match(api, /startBootstrapOnce/);
+  assert.equal(manifest.version, "3.4.2");
 });

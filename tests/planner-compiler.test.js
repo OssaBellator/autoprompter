@@ -140,5 +140,6 @@ test("extension manifest loads the task-board planner entry point", () => {
   assert.match(entry, /background-project-api\.js/);
   assert.match(entry, /planner-fallback\.js/);
   assert.match(entry, /AutoPrompterProjectTaskBoardController\.start\(\)/);
-  assert.equal(manifest.version, "3.4.1");
+  assert.match(entry, /AutoPrompterProjectRoleKick\.start\(\)/);
+  assert.equal(manifest.version, "3.4.2");
 });

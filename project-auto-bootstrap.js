@@ -9,7 +9,7 @@
   root.AutoPrompterProjectAutoBootstrap = api;
 })(typeof globalThis !== "undefined" ? globalThis : self, (root, ProjectStore, BackgroundApi) => {
   const BOOTSTRAP_KEY = "autoprompterProjectBootstraps";
-  const START_DELAY_MS = 1500;
+  const START_DELAY_MS = 8000;
   const pending = new Map();
   let started = false;
 
