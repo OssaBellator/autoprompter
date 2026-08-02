@@ -51,10 +51,21 @@
     if (!projectStore || !WorkerProtocol) throw new Error("AutoPrompter task-board dependencies are unavailable.");
     if (projectStore[PATCH_FLAG]) return projectStore[PATCH_FLAG];
 
+    const originalCreateProject = projectStore.createProject.bind(projectStore);
     const originalStartProject = projectStore.startProject.bind(projectStore);
     const originalPrepareProjectDispatches = projectStore.prepareProjectDispatches.bind(projectStore);
     const originalRecoverProjectLeases = projectStore.recoverProjectLeases.bind(projectStore);
     const originalSummarizeProjectRuntime = projectStore.summarizeProjectRuntime.bind(projectStore);
+
+    projectStore.createProject = function createTaskBoardProject(storeInput, input, clock = Date.now) {
+      const requestedWorkers = Array.isArray(input?.workerChatIds) ? input.workerChatIds.length : 0;
+      const maxConcurrentWorkers = Math.max(1, Math.min(6, Number(input?.maxConcurrentWorkers || requestedWorkers || 3)));
+      return originalCreateProject(storeInput, {
+        ...input,
+        workerChatIds: [],
+        maxConcurrentWorkers
+      }, clock);
+    };
 
     projectStore.startProject = function startTaskBoardProject(storeInput, projectId, clock = Date.now) {
       const store = clone(storeInput);
@@ -172,6 +183,7 @@
 
     const installed = Object.freeze({
       mode: MODE,
+      originalCreateProject,
       originalStartProject,
       originalPrepareProjectDispatches,
       originalSummarizeProjectRuntime
