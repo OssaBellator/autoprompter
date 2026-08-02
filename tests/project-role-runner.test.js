@@ -30,6 +30,10 @@ function loadAdapter() {
   return { chrome, registered, sent };
 }
 
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
 test("reviewer jobs use the guarded bootstrap submitter and return on the role channel", async () => {
   const runtime = loadAdapter();
   let synthetic = null;
@@ -66,7 +70,7 @@ test("reviewer jobs use the guarded bootstrap submitter and return on the role c
   assert.equal(synthetic.type, "RUN_PROJECT_BOOTSTRAP_JOB");
   assert.equal(synthetic.stage, "review");
   assert.equal(synthetic.expectedConversationId, "reviewer-chat");
-  assert.deepEqual(runtime.sent, [{
+  assert.deepEqual(plain(runtime.sent), [{
     type: "PROJECT_ROLE_RESULT",
     projectId: "project",
     jobId: "review:project:dispatch-1",
