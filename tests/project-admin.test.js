@@ -1,0 +1,87 @@
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const ProjectStore = require("../project-store.js");
+const ProjectAdmin = require("../project-admin.js");
+
+function project(id, updatedAt) {
+  return {
+    projectId: id,
+    title: id,
+    updatedAt,
+    createdAt: updatedAt
+  };
+}
+
+test("deleting a project removes every project-scoped store collection", () => {
+  const store = ProjectStore.emptyStore();
+  store.projects.one = project("one", "2026-08-02T01:00:00.000Z");
+  store.projects.two = project("two", "2026-08-02T02:00:00.000Z");
+  store.activeProjectId = "one";
+  for (const key of [
+    "resumeStatusByProject",
+    "pendingPlansByProject",
+    "approvedPlansByProject",
+    "tasksByProject",
+    "dispatchesByProject",
+    "resultsByProject",
+    "reviewsByProject",
+    "integrationsByProject",
+    "approvalsByProject",
+    "reconciliationsByProject"
+  ]) {
+    store[key].one = { projectId: "one", workerTabId: 77 };
+    store[key].two = { projectId: "two" };
+  }
+  store.events = [
+    { projectId: "one", type: "deleted" },
+    { projectId: "two", type: "kept" }
+  ];
+
+  const result = ProjectAdmin.deleteProjectFromStore(store, "one");
+  assert.equal(result.project.projectId, "one");
+  assert.equal(result.store.projects.one, undefined);
+  assert.equal(result.store.activeProjectId, "two");
+  assert.deepEqual(result.store.events, [{ projectId: "two", type: "kept" }]);
+  assert.ok(result.tabIds.includes(77));
+  for (const key of [
+    "resumeStatusByProject",
+    "pendingPlansByProject",
+    "approvedPlansByProject",
+    "tasksByProject",
+    "dispatchesByProject",
+    "resultsByProject",
+    "reviewsByProject",
+    "integrationsByProject",
+    "approvalsByProject",
+    "reconciliationsByProject"
+  ]) {
+    assert.equal(result.store[key].one, undefined);
+    assert.ok(result.store[key].two);
+  }
+});
+
+test("project job cleanup removes keyed and identity-bound records and collects managed tabs", () => {
+  const result = ProjectAdmin.pruneProjectRecords({
+    one: { projectId: "one", roles: { planner: { tabId: 10 } } },
+    "review:one:1": { projectId: "one", tabId: 11 },
+    "review:two:1": { projectId: "two", tabId: 12 }
+  }, "one");
+
+  assert.deepEqual(Object.keys(result.records), ["review:two:1"]);
+  assert.deepEqual(result.tabIds.sort((a, b) => a - b), [10, 11]);
+});
+
+test("Existing Projects UI exposes deletion through the isolated administration scope", () => {
+  const ui = fs.readFileSync(path.join(__dirname, "..", "project-ui.js"), "utf8");
+  const entry = fs.readFileSync(path.join(__dirname, "..", "background-entry.js"), "utf8");
+  assert.match(ui, /deleteExistingProject/);
+  assert.match(ui, /AUTOPROMPTER_PROJECT_ADMIN/);
+  assert.match(ui, /does not delete GitHub content or ChatGPT conversations/);
+  assert.match(entry, /project-admin\.js/);
+  assert.match(entry, /AutoPrompterProjectAdmin\.start\(\)/);
+});
