@@ -13,6 +13,7 @@
   const PROPOSAL_END = "AUTOPROMPTER_PROPOSAL_END";
   const PLAN_BEGIN = "AUTOPROMPTER_PLAN_BEGIN";
   const PLAN_END = "AUTOPROMPTER_PLAN_END";
+  const ROLE_READY = "AUTOPROMPTER_ROLE_READY: planner";
   let timer = null;
   let checking = false;
   let observed = null;
@@ -51,22 +52,25 @@
     return nodes;
   }
 
-  function hasCompleteEnvelope(text) {
-    const value = String(text || "");
-    return (
+  function isPlannerCandidate(text) {
+    const value = String(text || "").trim();
+    const completeEnvelope = (
       value.includes(PROPOSAL_BEGIN) && value.includes(PROPOSAL_END)
     ) || (
       value.includes(PLAN_BEGIN) && value.includes(PLAN_END)
     );
+    if (completeEnvelope) return true;
+    if (value.includes(ROLE_READY)) return false;
+    return value.length >= 40;
   }
 
-  function latestPlannerEnvelope() {
+  function latestPlannerOutput() {
     const nodes = assistantNodes();
     for (let index = nodes.length - 1; index >= 0; index -= 1) {
       const node = nodes[index];
       const content = node.querySelector?.('[data-message-content], .markdown, .prose') || node;
       const text = String(content?.innerText || content?.textContent || "").trim();
-      if (!hasCompleteEnvelope(text)) continue;
+      if (!isPlannerCandidate(text)) continue;
       const identity = node.getAttribute?.("data-turn-id")
         || node.getAttribute?.("data-message-id")
         || node.getAttribute?.("data-testid")
@@ -97,7 +101,7 @@
         observed = null;
         return;
       }
-      const candidate = latestPlannerEnvelope();
+      const candidate = latestPlannerOutput();
       const currentConversation = conversation();
       if (!candidate || !currentConversation) return;
 
