@@ -38,7 +38,7 @@
     store = Folders.migrateLegacyStore(values[Folders.STORE_KEY], values[Folders.LEGACY_PROJECTS_KEY]);
     catalog = Array.isArray(values[Folders.CATALOG_KEY]) ? values[Folders.CATALOG_KEY] : [];
     activeProjectId = String(values[Folders.ACTIVE_KEY] || "");
-    if (!store.projects[activeProjectId]) activeProjectId = Object.keys(store.projects)[0] || "";
+    if (!store.projects[activeProjectId]) activeProjectId = "";
     await root.chrome.storage.local.set({
       [Folders.STORE_KEY]: store,
       [Folders.ACTIVE_KEY]: activeProjectId
@@ -228,7 +228,7 @@
     if (!project) return;
     if (!root.confirm(`Delete the project folder “${project.name}”? Chats and AutoContinue settings will not be deleted.`)) return;
     store = Folders.deleteProject(store, activeProjectId);
-    activeProjectId = Object.keys(store.projects)[0] || "";
+    activeProjectId = "";
     await root.chrome.storage.local.set({
       [Folders.STORE_KEY]: store,
       [Folders.ACTIVE_KEY]: activeProjectId
