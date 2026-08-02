@@ -7,6 +7,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : self, root => {
   const CATALOG_KEY = "autoprompterChatCatalog";
   const ROLE_KEYS = Object.freeze({ planner: "plannerChatId", reviewer: "reviewerChatId" });
+  const INITIALIZED_PLANNER_STAGES = new Set(["planner_plan", "planner_repair", "planner_validated", "completed"]);
   let installed = false;
 
   function rolePrompt(project, role) {
@@ -23,6 +24,51 @@
       "Acknowledge initialization with exactly this single line and no other text:",
       `AUTOPROMPTER_ROLE_READY: ${role}`
     ].join("\n");
+  }
+
+  function conversationUrl(chatId) {
+    const id = String(chatId || "").trim();
+    return id ? `https://chatgpt.com/c/${encodeURIComponent(id)}` : "";
+  }
+
+  function roleWasInitialized(existing, role) {
+    const state = existing?.roles?.[role];
+    if (!state) return false;
+    if (role === "reviewer") return state.stage === "completed";
+    return INITIALIZED_PLANNER_STAGES.has(state.stage)
+      || Boolean(existing.planValidated)
+      || Number(existing.repairAttempts || 0) > 0;
+  }
+
+  function shouldRecoverIssueManifest(existing, project) {
+    return Boolean(
+      project?.roles?.plannerChatId
+      && existing
+      && (
+        ["failed", "cancelled"].includes(existing.status)
+        || Number(existing.repairAttempts || 0) > 0
+        || roleWasInitialized(existing, "planner")
+      )
+    );
+  }
+
+  function recoveryPlannerPrompt(project, normalPrompt) {
+    const adjusted = String(normalPrompt || "")
+      .replace(
+        "Use the connected write-capable GitHub plugin/tool to inspect the repository and create the actual GitHub issues before answering.",
+        "Use the connected write-capable GitHub plugin/tool to inspect the repository and the issues that already exist for this project before answering."
+      )
+      .replace(
+        "Create one issue for every independently executable unit of work.",
+        "Ensure one existing issue represents every independently executable unit of work."
+      );
+    return [
+      "Resume the existing AutoPrompter GitHub issue-planning stage. Do not initialize or acknowledge the planner role again.",
+      "The previous run may already have created the required GitHub issues. Search the repository's current issues first and reuse the exact existing issue numbers and URLs.",
+      "Do not create duplicate issues. Create an issue only when an equivalent scoped issue does not already exist, and create only the missing issue.",
+      "Return the newest verified issue manifest requested below. Do not repeat an older manifest and do not include prose outside the envelope.",
+      adjusted
+    ].join("\n\n");
   }
 
   async function startBootstrap(projectId) {
@@ -44,34 +90,77 @@
     const catalog = Array.isArray(stored[CATALOG_KEY]) ? stored[CATALOG_KEY] : [];
     const byId = new Map(catalog.map(chat => [chat.id, chat]));
     const roleNames = Object.keys(ROLE_KEYS);
-    const tabs = await Promise.all(roleNames.map(() => root.chrome.tabs.create({ url: "about:blank", active: false })));
     const createdAt = new Date().toISOString();
+    const pendingPlan = store.pendingPlansByProject?.[projectId] || null;
+    const recoverManifest = shouldRecoverIssueManifest(existing, project);
     const roles = {};
+    const createdTabs = [];
 
     try {
       for (let index = 0; index < roleNames.length; index += 1) {
         const role = roleNames[index];
         const chatId = project.roles?.[ROLE_KEYS[role]] || null;
-        const catalogChat = chatId ? byId.get(chatId) : null;
-        if (chatId && !catalogChat?.url) {
-          throw new Error(`${role} chat ${chatId} is missing from the local catalog. Refresh the ChatGPT sidebar or choose Create automatically.`);
+        const initialized = roleWasInitialized(existing, role);
+
+        if (role === "reviewer" && initialized && chatId) {
+          roles[role] = {
+            role,
+            chatId,
+            tabId: null,
+            stage: "completed",
+            status: "Existing reviewer/merger role reused",
+            error: "",
+            retries: 0,
+            jobDispatched: false,
+            jobId: null,
+            prompt: "",
+            freshRequestId: null
+          };
+          continue;
+        }
+
+        if (role === "planner" && pendingPlan && initialized && chatId) {
+          roles[role] = {
+            role,
+            chatId,
+            tabId: null,
+            stage: "planner_validated",
+            status: "Validated issue manifest recovered; creating task records",
+            error: "",
+            retries: 0,
+            jobDispatched: false,
+            jobId: null,
+            prompt: "",
+            freshRequestId: null
+          };
+          continue;
+        }
+
+        const tab = await root.chrome.tabs.create({ url: "about:blank", active: false });
+        createdTabs.push(tab.id);
+        let stage = "role_init";
+        let prompt = rolePrompt(project, role);
+        if (role === "planner" && initialized && chatId) {
+          const planned = root.AutoPrompterProjectStore.buildProjectPlannerPrompt(store, projectId);
+          stage = "planner_plan";
+          prompt = recoverManifest ? recoveryPlannerPrompt(project, planned.prompt) : planned.prompt;
         }
         roles[role] = {
           role,
           chatId,
-          tabId: tabs[index].id,
-          stage: "role_init",
-          status: "Opening role chat",
+          tabId: tab.id,
+          stage,
+          status: stage === "role_init" ? "Opening role chat" : "Recovering existing GitHub issue manifest",
           error: "",
           retries: 0,
           jobDispatched: false,
           jobId: null,
-          prompt: rolePrompt(project, role),
-          freshRequestId: `${projectId}:${role}:${Date.now()}:${index}`
+          prompt,
+          freshRequestId: chatId ? null : `${projectId}:${role}:${Date.now()}:${index}`
         };
       }
     } catch (error) {
-      await root.removeManagedTabs(tabs.map(tab => tab.id));
+      await root.removeManagedTabs(createdTabs);
       throw error;
     }
 
@@ -81,8 +170,9 @@
       status: "starting",
       error: "",
       repairAttempts: 0,
-      planValidated: false,
+      planValidated: Boolean(pendingPlan),
       planApproved: false,
+      resumedFromStatus: existing?.status || null,
       createdAt,
       updatedAt: createdAt,
       roles
@@ -98,8 +188,9 @@
     try {
       await Promise.all(roleNames.map(async role => {
         const state = roles[role];
+        if (!Number.isInteger(state.tabId)) return;
         const target = state.chatId
-          ? byId.get(state.chatId).url
+          ? (byId.get(state.chatId)?.url || conversationUrl(state.chatId))
           : root.freshChatUrl(state.freshRequestId, projectId, role);
         await root.chrome.tabs.update(state.tabId, { url: target, active: false });
       }));
@@ -110,7 +201,8 @@
     bootstrap.status = "running";
     bootstrap.updatedAt = new Date().toISOString();
     await root.saveProjectBootstraps(bootstraps);
-    return { project, bootstrap: root.publicProjectBootstrap(bootstrap) };
+    if (bootstrap.planValidated) await approveWhenReady(projectId, bootstraps);
+    return { project: (await root.loadProjectStore()).projects[projectId], bootstrap: root.publicProjectBootstrap(bootstrap) };
   }
 
   async function approveWhenReady(projectId, bootstraps) {
@@ -181,7 +273,12 @@
   return {
     CATALOG_KEY,
     ROLE_KEYS,
+    INITIALIZED_PLANNER_STAGES: [...INITIALIZED_PLANNER_STAGES],
     rolePrompt,
+    conversationUrl,
+    roleWasInitialized,
+    shouldRecoverIssueManifest,
+    recoveryPlannerPrompt,
     startBootstrap,
     approveWhenReady,
     install
