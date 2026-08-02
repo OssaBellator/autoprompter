@@ -1,11 +1,11 @@
 {
   "name": "autoprompter",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "private": true,
-  "description": "Web-first ChatGPT subscription multi-agent orchestration with autonomous role bootstrap, planner repair, concurrent workers, and guarded project integration.",
+  "description": "Web-first ChatGPT subscription multi-agent orchestration with deterministic plan compilation, concurrent workers, independent review, and guarded integration.",
   "scripts": {
     "test": "node --test",
-    "check": "node --check planner-protocol.js && node --check worker-protocol.js && node --check result-protocol.js && node --check reviewer-protocol.js && node --check integration-protocol.js && node --check approval-protocol.js && node --check reconciliation-protocol.js && node --check project-store.js && node --check background.js && node --check content.js && node --check runtime-compat.js && node --check popup.js"
+    "check": "node --check planner-protocol.js && node --check planner-compiler.js && node --check worker-protocol.js && node --check result-protocol.js && node --check reviewer-protocol.js && node --check integration-protocol.js && node --check approval-protocol.js && node --check reconciliation-protocol.js && node --check project-store.js && node --check background.js && node --check background-entry.js && node --check content.js && node --check runtime-compat.js && node --check popup.js"
   },
   "engines": {
     "node": ">=20"
