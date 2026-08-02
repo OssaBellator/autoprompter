@@ -31,11 +31,15 @@ test("planner recovery binds the exact tab, job, project, and stage", () => {
   assert.equal(Recovery.recoveryForTab(bootstraps, 99), null);
 });
 
-test("content recovery only submits complete planner envelopes", () => {
+test("content recovery submits only the latest assistant turn with a complete planner envelope", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "project-plan-capture.js"), "utf8");
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8"));
-  assert.match(source, /AUTOPROMPTER_PROPOSAL_BEGIN/);
-  assert.match(source, /AUTOPROMPTER_PROPOSAL_END/);
+  assert.match(source, /AUTOPROMPTER_ISSUES_BEGIN/);
+  assert.match(source, /AUTOPROMPTER_ISSUES_END/);
+  assert.match(source, /latestCompleteEnvelope/);
+  assert.match(source, /const index = nodes\.length - 1/);
+  assert.doesNotMatch(source, /value\.length >= 40/);
+  assert.doesNotMatch(source, /for \(let index = nodes\.length - 1; index >= 0/);
   assert.match(source, /PROJECT_BOOTSTRAP_RESULT/);
   assert.match(source, /recoveredFromStableDom/);
   assert.equal(manifest.content_scripts[0].js.at(-1), "project-plan-capture.js");
