@@ -32,7 +32,7 @@
 
   function bootstrapAlreadyStarted(bootstraps, projectId) {
     const status = bootstraps?.[projectId]?.status;
-    return ["starting", "running", "completed"].includes(status);
+    return ["starting", "running", "completed", "failed", "cancelled"].includes(status);
   }
 
   async function startProjectIfNeeded(projectId) {
