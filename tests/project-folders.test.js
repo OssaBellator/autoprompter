@@ -67,6 +67,18 @@ test("project and per-chat notes are appended to the selected chat prompt", () =
   assert.match(message.chats[1].settings.prompt, /Independent note/);
 });
 
+test("context remains inside the scheduler prompt limit even with a long base prompt", () => {
+  const prompt = Folders.appendContext(
+    "x".repeat(12000),
+    { name: "Long project", repository: "owner/repo", notes: "project-note ".repeat(600) },
+    "chat-note ".repeat(600)
+  );
+  assert.ok(prompt.length <= Folders.MAX_PROMPT);
+  assert.match(prompt, /AutoPrompter context for this chat/);
+  assert.match(prompt, /Project folder: Long project/);
+  assert.match(prompt, /Chat notes:/);
+});
+
 test("folder CRUD normalizes repositories and preserves chat order", () => {
   const created = Folders.upsertProject(null, {
     name: "Docs",
