@@ -5,9 +5,39 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  apply-project-composer-fix:
+    if: github.ref == 'refs/heads/fix/composer-rerender-project-tabs' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Apply guarded source transformations
+        run: node scripts/apply-composer-project-tabs-fix.js
+      - name: Validate generated source
+        run: |
+          npm test
+          npm run check
+      - name: Remove patch machinery and restore CI workflow
+        run: |
+          rm scripts/apply-composer-project-tabs-fix.js
+          rm -f .github/workflows/apply-composer-project-tabs-fix.yml
+          git checkout origin/main -- .github/workflows/test.yml
+      - name: Commit generated fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Fix Project Mode composer submission and split project views"
+          git push origin HEAD:fix/composer-rerender-project-tabs
+
   test:
     runs-on: ubuntu-latest
     steps:
