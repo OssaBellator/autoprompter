@@ -67,19 +67,27 @@ test("repository action results fail closed on changed scope or evidence-free su
     action: approval.action,
     target: approval.target
   };
-  assert.throws(() => ActionProtocol.validateResult(JSON.stringify({
-    schemaVersion: "1.0",
-    ...expected,
-    target: "another/repository:main",
-    status: "completed",
-    summary: "Done",
-    evidence: { url: "https://example.invalid" }
-  }), /target does not match/);
-  assert.throws(() => ActionProtocol.validateResult(JSON.stringify({
-    schemaVersion: "1.0",
-    ...expected,
-    status: "completed",
-    summary: "Done",
-    evidence: {}
-  }), /require evidence/);
+
+  assert.throws(
+    () => ActionProtocol.validateResult(JSON.stringify({
+      schemaVersion: "1.0",
+      ...expected,
+      target: "another/repository:main",
+      status: "completed",
+      summary: "Done",
+      evidence: { url: "https://example.invalid" }
+    }), expected),
+    /target does not match/
+  );
+
+  assert.throws(
+    () => ActionProtocol.validateResult(JSON.stringify({
+      schemaVersion: "1.0",
+      ...expected,
+      status: "completed",
+      summary: "Done",
+      evidence: {}
+    }), expected),
+    /require evidence/
+  );
 });
