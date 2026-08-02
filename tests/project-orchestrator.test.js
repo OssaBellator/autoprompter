@@ -91,7 +91,7 @@ test("role jobs disable continuity and preserve bounded interruption settings", 
   assert.equal(settings.contextThresholdPercent, 98);
 });
 
-test("extension adapts planner issue capture, persistent workers, and combined PR review jobs", () => {
+test("extension adapts issue capture, temporary workers, stage resume, and combined PR review jobs", () => {
   const root = path.join(__dirname, "..");
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
   const entry = fs.readFileSync(path.join(root, "background-entry.js"), "utf8");
@@ -103,6 +103,8 @@ test("extension adapts planner issue capture, persistent workers, and combined P
 
   assert.deepEqual(manifest.content_scripts[0].js.slice(-3), ["project-role-runner.js", "content.js", "project-plan-capture.js"]);
   assert.match(entry, /AutoPrompterProjectPlanRecovery\.start\(\)/);
+  assert.match(entry, /AutoPrompterGitHubIssueEnvelopeRecovery\.install\(/);
+  assert.match(entry, /AutoPrompterGitHubIssueResume\.install\(\)/);
   assert.match(entry, /AutoPrompterProjectOrchestrator\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectRoleKick\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectTaskBoardController\.start\(\)/);
@@ -116,6 +118,7 @@ test("extension adapts planner issue capture, persistent workers, and combined P
   assert.match(content, /message\.type === "RUN_PROJECT_BOOTSTRAP_JOB"/);
   assert.match(content, /RUN_PROJECT_SUCCESSOR_TASK/);
   assert.match(capture, /GET_PROJECT_PLANNER_RECOVERY/);
+  assert.match(capture, /AUTOPROMPTER_ISSUES_BEGIN/);
   assert.match(capture, /PROJECT_BOOTSTRAP_RESULT/);
   assert.match(workflow, /AUTOPROMPTER_ISSUES_BEGIN/);
   assert.match(workflow, /AUTOPROMPTER_ISSUE_WORK_BEGIN/);
@@ -123,5 +126,6 @@ test("extension adapts planner issue capture, persistent workers, and combined P
   assert.match(workflow, /reviewer and integrator/);
   assert.match(githubUi, /GitHub Issue and Pull Request Mode/);
   assert.match(githubUi, /Pull-request reviewer and merger chat/);
-  assert.equal(manifest.version, "4.0.1");
+  assert.match(githubUi, /Resume stage/);
+  assert.equal(manifest.version, "4.0.2");
 });
