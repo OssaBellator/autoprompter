@@ -27,8 +27,8 @@
         "https://chat.openai.com/*"
       ],
       "js": [
-        "content.js",
-        "project-role-runner.js"
+        "project-role-runner.js",
+        "content.js"
       ],
       "run_at": "document_idle"
     }
