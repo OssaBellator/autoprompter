@@ -76,12 +76,15 @@ test("project job cleanup removes keyed and identity-bound records and collects 
   assert.deepEqual(result.tabIds.sort((a, b) => a - b), [10, 11]);
 });
 
-test("Existing Projects UI exposes deletion through the isolated administration scope", () => {
+test("Existing Projects UI uses an in-popup listbox and hover delete icon", () => {
   const ui = fs.readFileSync(path.join(__dirname, "..", "project-ui.js"), "utf8");
   const entry = fs.readFileSync(path.join(__dirname, "..", "background-entry.js"), "utf8");
-  assert.match(ui, /deleteExistingProject/);
+  assert.match(ui, /projectPickerMenu/);
+  assert.match(ui, /project-delete-icon/);
+  assert.match(ui, /DELETE_CONFIRM_MS/);
   assert.match(ui, /AUTOPROMPTER_PROJECT_ADMIN/);
-  assert.match(ui, /does not delete GitHub content or ChatGPT conversations/);
+  assert.match(ui, /GitHub content and ChatGPT conversations are not deleted/);
+  assert.doesNotMatch(ui, /globalThis\.confirm/);
   assert.match(entry, /project-admin\.js/);
   assert.match(entry, /AutoPrompterProjectAdmin\.start\(\)/);
 });
