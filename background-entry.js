@@ -1,6 +1,12 @@
 "use strict";
 
-importScripts("background.js", "background-project-api.js", "planner-compiler.js", "planner-fallback.js");
+importScripts(
+  "background.js",
+  "background-project-api.js",
+  "planner-compiler.js",
+  "planner-fallback.js",
+  "planner-no-repair.js"
+);
 importScripts(
   "repository-bootstrap.js",
   "project-action-protocol.js",
@@ -13,6 +19,7 @@ if (
   !globalThis.AutoPrompterBackgroundProjectApi
   || !globalThis.AutoPrompterPlannerCompiler
   || !globalThis.AutoPrompterPlannerFallback
+  || !globalThis.AutoPrompterPlannerNoRepair
   || !globalThis.AutoPrompterProjectStore
   || !globalThis.AutoPrompterRepositoryBootstrap
   || !globalThis.AutoPrompterProjectActionProtocol
@@ -25,6 +32,7 @@ if (
 
 globalThis.AutoPrompterPlannerCompiler.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterPlannerFallback.install(globalThis.AutoPrompterProjectStore);
+globalThis.AutoPrompterPlannerNoRepair.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterProjectOrchestrator.start();
 globalThis.AutoPrompterProjectFullAuto.start();
 globalThis.AutoPrompterBootstrapUpgrade.start();
