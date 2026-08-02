@@ -28,7 +28,15 @@ test("legacy execution projects migrate to chat folders without task state", () 
   assert.deepEqual(store.projects.alpha.chatIds, ["planner", "reviewer", "worker-a", "worker-b"]);
   assert.equal(store.projects.alpha.repository, "OssaBellator/autoprompter");
   assert.match(store.projects.alpha.notes, /Ship the alpha release/);
-  assert.doesNotMatch(JSON.stringify(store.projects.alpha), /dispatch|task|review|bootstrap/i);
+  assert.deepEqual(Object.keys(store.projects.alpha).sort(), [
+    "chatIds",
+    "createdAt",
+    "id",
+    "name",
+    "notes",
+    "repository",
+    "updatedAt"
+  ]);
 });
 
 test("project and per-chat notes are appended to the selected chat prompt", () => {
