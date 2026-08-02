@@ -4,6 +4,7 @@ importScripts(
   "background.js",
   "autocontinue-unlimited-retries.js",
   "project-github-bootstrap.js",
+  "project-github-repair.js",
   "background-project-api.js",
   "planner-compiler.js",
   "planner-fallback.js",
@@ -14,6 +15,7 @@ importScripts(
   "project-admin.js",
   "project-task-board.js",
   "project-github-workflow.js",
+  "project-github-persistence.js",
   "project-fresh-dispatch.js",
   "project-github-dispatch.js",
   "project-auto-bootstrap.js",
@@ -29,6 +31,7 @@ importScripts(
 if (
   !globalThis.AutoPrompterUnlimitedConnectionRetries
   || !globalThis.AutoPrompterGitHubIssueBootstrap
+  || !globalThis.AutoPrompterGitHubIssueRepair
   || !globalThis.AutoPrompterBackgroundProjectApi
   || !globalThis.AutoPrompterPlannerCompiler
   || !globalThis.AutoPrompterPlannerFallback
@@ -39,6 +42,7 @@ if (
   || !globalThis.AutoPrompterProjectAdmin
   || !globalThis.AutoPrompterProjectTaskBoard
   || !globalThis.AutoPrompterGitHubIssueWorkflow
+  || !globalThis.AutoPrompterGitHubIssuePersistence
   || !globalThis.AutoPrompterProjectFreshDispatch
   || !globalThis.AutoPrompterGitHubIssueDispatch
   || !globalThis.AutoPrompterProjectAutoBootstrap
@@ -60,6 +64,7 @@ globalThis.AutoPrompterProjectFreshCapacity.install(globalThis.AutoPrompterProje
 globalThis.AutoPrompterProjectAutoStore.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterProjectTaskBoard.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterGitHubIssueWorkflow.install(globalThis.AutoPrompterProjectStore);
+globalThis.AutoPrompterGitHubIssuePersistence.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterGitHubIssueDispatch.install();
 globalThis.AutoPrompterProjectAdmin.start();
 globalThis.AutoPrompterProjectPlanRecovery.start();
