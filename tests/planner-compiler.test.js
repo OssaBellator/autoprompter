@@ -140,5 +140,5 @@ test("extension manifest loads the full-auto planner entry point", () => {
   assert.match(entry, /background-project-api\.js/);
   assert.match(entry, /planner-fallback\.js/);
   assert.match(entry, /AutoPrompterProjectFullAuto\.start\(\)/);
-  assert.equal(manifest.version, "3.3.0");
+  assert.equal(manifest.version, "3.3.1");
 });
