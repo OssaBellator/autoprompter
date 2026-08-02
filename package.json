@@ -1,6 +1,6 @@
 {
   "name": "autoprompter",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "private": true,
   "description": "GitHub-native ChatGPT orchestration with planner-created issues, persistent issue workers, and pull-request review or merge.",
   "scripts": {
