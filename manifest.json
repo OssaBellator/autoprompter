@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AutoPrompter for ChatGPT",
-  "version": "3.2.0",
-  "description": "Create and coordinate ChatGPT Web multi-agent projects with deterministic plans, automatic review handoffs, concurrent workers, and guarded integration.",
+  "version": "3.3.0",
+  "description": "Create and coordinate full-auto ChatGPT Web projects with deterministic planning, worker dispatch, independent review, repository actions, and guarded evidence.",
   "minimum_chrome_version": "102",
   "permissions": [
     "storage",

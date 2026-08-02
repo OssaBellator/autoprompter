@@ -1,11 +1,41 @@
 "use strict";
 
-importScripts("background.js", "planner-compiler.js");
-importScripts("repository-bootstrap.js", "project-orchestrator.js");
+importScripts(
+  "background.js",
+  "background-project-api.js",
+  "planner-compiler.js",
+  "planner-fallback.js",
+  "planner-no-repair.js",
+  "project-auto-store.js"
+);
+importScripts(
+  "repository-bootstrap.js",
+  "project-action-protocol.js",
+  "project-orchestrator.js",
+  "project-full-auto.js",
+  "bootstrap-upgrade.js"
+);
 
-if (!globalThis.AutoPrompterPlannerCompiler || !globalThis.AutoPrompterProjectStore || !globalThis.AutoPrompterRepositoryBootstrap || !globalThis.AutoPrompterProjectOrchestrator) {
-  throw new Error("AutoPrompter deterministic Project Mode runtime failed to initialize.");
+if (
+  !globalThis.AutoPrompterBackgroundProjectApi
+  || !globalThis.AutoPrompterPlannerCompiler
+  || !globalThis.AutoPrompterPlannerFallback
+  || !globalThis.AutoPrompterPlannerNoRepair
+  || !globalThis.AutoPrompterProjectAutoStore
+  || !globalThis.AutoPrompterProjectStore
+  || !globalThis.AutoPrompterRepositoryBootstrap
+  || !globalThis.AutoPrompterProjectActionProtocol
+  || !globalThis.AutoPrompterProjectOrchestrator
+  || !globalThis.AutoPrompterProjectFullAuto
+  || !globalThis.AutoPrompterBootstrapUpgrade
+) {
+  throw new Error("AutoPrompter full-auto Project Mode runtime failed to initialize.");
 }
 
 globalThis.AutoPrompterPlannerCompiler.install(globalThis.AutoPrompterProjectStore);
+globalThis.AutoPrompterPlannerFallback.install(globalThis.AutoPrompterProjectStore);
+globalThis.AutoPrompterPlannerNoRepair.install(globalThis.AutoPrompterProjectStore);
+globalThis.AutoPrompterProjectAutoStore.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterProjectOrchestrator.start();
+globalThis.AutoPrompterProjectFullAuto.start();
+globalThis.AutoPrompterBootstrapUpgrade.start();

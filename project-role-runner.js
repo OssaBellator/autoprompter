@@ -16,8 +16,18 @@
   function translatedMessage(payload) {
     const job = activeJobs.get(payload?.jobId);
     if (!job) return null;
+    const actionChannel = job.channel === "action";
     if (payload.type === "PROJECT_BOOTSTRAP_STATUS") {
-      return {
+      return actionChannel ? {
+        type: "PROJECT_ACTION_STATUS",
+        projectId: job.projectId,
+        jobId: job.jobId,
+        actionId: job.actionId,
+        approvalId: job.approvalId,
+        action: job.action,
+        target: job.target,
+        status: payload.status
+      } : {
         type: "PROJECT_ROLE_STATUS",
         projectId: job.projectId,
         jobId: job.jobId,
@@ -27,7 +37,18 @@
       };
     }
     if (payload.type === "PROJECT_BOOTSTRAP_RESULT") {
-      return {
+      return actionChannel ? {
+        type: "PROJECT_ACTION_RESULT",
+        projectId: job.projectId,
+        jobId: job.jobId,
+        actionId: job.actionId,
+        approvalId: job.approvalId,
+        action: job.action,
+        target: job.target,
+        conversation: payload.conversation,
+        output: payload.output,
+        assistantSignature: payload.assistantSignature
+      } : {
         type: "PROJECT_ROLE_RESULT",
         projectId: job.projectId,
         jobId: job.jobId,
@@ -41,7 +62,17 @@
       };
     }
     if (payload.type === "PROJECT_BOOTSTRAP_ERROR") {
-      return {
+      return actionChannel ? {
+        type: "PROJECT_ACTION_ERROR",
+        projectId: job.projectId,
+        jobId: job.jobId,
+        actionId: job.actionId,
+        approvalId: job.approvalId,
+        action: job.action,
+        target: job.target,
+        errorKind: payload.kind || "runtime_error",
+        error: payload.error || "Repository action job failed."
+      } : {
         type: "PROJECT_ROLE_ERROR",
         projectId: job.projectId,
         jobId: job.jobId,
@@ -59,20 +90,29 @@
   chrome.runtime.sendMessage = (payload, ...args) => {
     const translated = translatedMessage(payload);
     if (!translated) return originalSendMessage(payload, ...args);
-    const terminal = translated.type === "PROJECT_ROLE_RESULT" || translated.type === "PROJECT_ROLE_ERROR";
+    const terminal = ["PROJECT_ROLE_RESULT", "PROJECT_ROLE_ERROR", "PROJECT_ACTION_RESULT", "PROJECT_ACTION_ERROR"].includes(translated.type);
     const result = originalSendMessage(translated, ...args);
     if (terminal) Promise.resolve(result).finally(() => activeJobs.delete(payload.jobId));
     return result;
   };
 
   function contentListener() {
-    return downstreamListeners.find(listener => listener !== roleListener) || null;
+    return downstreamListeners.find(listener => listener !== adapterListener) || null;
   }
 
-  function dispatchThroughGuardedRunner(message) {
+  function dispatchThroughGuardedRunner(message, channel) {
     const listener = contentListener();
     if (!listener) throw new Error("The primary AutoPrompter content runner is not ready.");
-    activeJobs.set(message.jobId, {
+    activeJobs.set(message.jobId, channel === "action" ? {
+      channel,
+      jobId: message.jobId,
+      projectId: message.projectId,
+      actionId: message.actionId,
+      approvalId: message.approvalId,
+      action: message.action,
+      target: message.target
+    } : {
+      channel,
       jobId: message.jobId,
       projectId: message.projectId,
       role: message.role,
@@ -84,25 +124,28 @@
       type: "RUN_PROJECT_BOOTSTRAP_JOB",
       jobId: message.jobId,
       projectId: message.projectId,
-      role: message.role,
-      stage: message.kind,
+      role: message.role || "integrator",
+      stage: channel === "action" ? "repository_action" : message.kind,
       prompt: message.prompt,
       expectedConversationId: message.expectedConversationId,
       freshRequestId: null,
       settings: message.settings
     };
     const accepted = listener(synthetic, {}, () => {});
-    if (accepted === undefined) throw new Error("The guarded AutoPrompter content runner rejected the role job.");
+    if (accepted === undefined) throw new Error("The guarded AutoPrompter content runner rejected the managed job.");
   }
 
-  function roleListener(message, _sender, sendResponse) {
-    if (message?.type !== "RUN_PROJECT_ROLE_JOB") return false;
+  function adapterListener(message, _sender, sendResponse) {
+    const channel = message?.type === "RUN_PROJECT_ACTION_JOB"
+      ? "action"
+      : message?.type === "RUN_PROJECT_ROLE_JOB" ? "role" : null;
+    if (!channel) return false;
     if (activeJobs.has(message.jobId)) {
       sendResponse({ ok: true, jobId: message.jobId, duplicate: true });
       return false;
     }
     try {
-      dispatchThroughGuardedRunner(message);
+      dispatchThroughGuardedRunner(message, channel);
       sendResponse({ ok: true, jobId: message.jobId });
     } catch (error) {
       activeJobs.delete(message.jobId);
@@ -111,7 +154,7 @@
     return false;
   }
 
-  originalAddListener(roleListener);
+  originalAddListener(adapterListener);
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = { translatedMessage };

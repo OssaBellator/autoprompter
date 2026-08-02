@@ -1,11 +1,11 @@
 {
   "name": "autoprompter",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "private": true,
-  "description": "Web-first ChatGPT subscription multi-agent orchestration with deterministic planning, automatic review handoffs, concurrent workers, and guarded integration.",
+  "description": "Web-first ChatGPT subscription multi-agent orchestration with local plan compilation, automatic worker dispatch, independent review, integration approval, and repository actions.",
   "scripts": {
     "test": "node --test",
-    "check": "node --check planner-protocol.js && node --check planner-compiler.js && node --check repository-bootstrap.js && node --check project-orchestrator.js && node --check project-role-runner.js && node --check worker-protocol.js && node --check result-protocol.js && node --check reviewer-protocol.js && node --check integration-protocol.js && node --check approval-protocol.js && node --check reconciliation-protocol.js && node --check project-store.js && node --check background.js && node --check background-entry.js && node --check content.js && node --check runtime-compat.js && node --check popup.js"
+    "check": "node --check planner-protocol.js && node --check planner-compiler.js && node --check planner-fallback.js && node --check planner-no-repair.js && node --check project-auto-store.js && node --check bootstrap-upgrade.js && node --check repository-bootstrap.js && node --check project-action-protocol.js && node --check project-orchestrator.js && node --check project-full-auto.js && node --check project-role-runner.js && node --check project-ui.js && node --check worker-protocol.js && node --check result-protocol.js && node --check reviewer-protocol.js && node --check integration-protocol.js && node --check approval-protocol.js && node --check reconciliation-protocol.js && node --check project-store.js && node --check background.js && node --check background-project-api.js && node --check background-entry.js && node --check content.js && node --check runtime-compat.js && node --check popup.js"
   },
   "engines": {
     "node": ">=20"
