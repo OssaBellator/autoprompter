@@ -6,10 +6,12 @@ importScripts(
   "planner-compiler.js",
   "planner-fallback.js",
   "planner-no-repair.js",
-  "project-auto-store.js"
+  "project-auto-store.js",
+  "project-admin.js"
 );
 importScripts(
   "repository-bootstrap.js",
+  "repository-bootstrap-scope.js",
   "project-action-protocol.js",
   "project-orchestrator.js",
   "project-full-auto.js",
@@ -22,8 +24,10 @@ if (
   || !globalThis.AutoPrompterPlannerFallback
   || !globalThis.AutoPrompterPlannerNoRepair
   || !globalThis.AutoPrompterProjectAutoStore
+  || !globalThis.AutoPrompterProjectAdmin
   || !globalThis.AutoPrompterProjectStore
   || !globalThis.AutoPrompterRepositoryBootstrap
+  || !globalThis.AutoPrompterRepositoryBootstrapScope
   || !globalThis.AutoPrompterProjectActionProtocol
   || !globalThis.AutoPrompterProjectOrchestrator
   || !globalThis.AutoPrompterProjectFullAuto
@@ -36,6 +40,7 @@ globalThis.AutoPrompterPlannerCompiler.install(globalThis.AutoPrompterProjectSto
 globalThis.AutoPrompterPlannerFallback.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterPlannerNoRepair.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterProjectAutoStore.install(globalThis.AutoPrompterProjectStore);
+globalThis.AutoPrompterProjectAdmin.start();
 globalThis.AutoPrompterProjectOrchestrator.start();
 globalThis.AutoPrompterProjectFullAuto.start();
 globalThis.AutoPrompterBootstrapUpgrade.start();
