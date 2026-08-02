@@ -33,6 +33,9 @@ test("Project Mode separates existing and new project views", () => {
   assert.match(popupHtml, /id="projectNewPanel"[^>]*hidden/);
   assert.match(popupCss, /\.project-tabs/);
   assert.match(popupJs, /function setProjectTab/);
+  assert.match(popupJs, /function handleProjectTabKeydown/);
+  assert.match(popupJs, /ArrowLeft/);
+  assert.match(popupJs, /ArrowRight/);
   assert.match(popupJs, /setProjectTab\("existing"\)/);
   assert.match(popupJs, /setProjectTab\("new"\)/);
 });
