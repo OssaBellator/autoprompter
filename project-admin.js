@@ -74,13 +74,6 @@
     return { records, tabIds: [...tabIds] };
   }
 
-  async function closeTabs(tabIds) {
-    if (!root.chrome?.tabs?.remove) return;
-    for (const tabId of [...new Set(tabIds.filter(Number.isInteger))]) {
-      try { await root.chrome.tabs.remove(tabId); } catch { /* already closed or unavailable */ }
-    }
-  }
-
   async function deleteProjectState(projectIdInput) {
     if (!ProjectStore || !root.chrome?.storage?.local) throw new Error("Project storage is unavailable.");
     const projectId = normalizeProjectId(projectIdInput);
@@ -91,6 +84,12 @@
     const bootstraps = pruneProjectRecords(stored?.[BOOTSTRAP_KEY], projectId);
     const roleJobs = pruneProjectRecords(stored?.[ROLE_JOBS_KEY], projectId);
     const actionJobs = pruneProjectRecords(stored?.[ACTION_JOBS_KEY], projectId);
+    const detachedTabIds = [...new Set([
+      ...deleted.tabIds,
+      ...bootstraps.tabIds,
+      ...roleJobs.tabIds,
+      ...actionJobs.tabIds
+    ].filter(Number.isInteger))];
 
     await root.chrome.storage.local.set({
       [ProjectStore.PROJECTS_KEY]: deleted.store,
@@ -98,16 +97,14 @@
       [ROLE_JOBS_KEY]: roleJobs.records,
       [ACTION_JOBS_KEY]: actionJobs.records
     });
-    await closeTabs([
-      ...deleted.tabIds,
-      ...bootstraps.tabIds,
-      ...roleJobs.tabIds,
-      ...actionJobs.tabIds
-    ]);
 
+    // Do not remove browser tabs here. Closing or refocusing tabs while a toolbar
+    // popup is open dismisses the popup. The tabs become ordinary unmanaged
+    // ChatGPT tabs after their project records are removed.
     return {
       projectId,
       deletedProject: deleted.project,
+      detachedTabIds,
       activeProjectId: deleted.store.activeProjectId,
       projects: Object.values(deleted.store.projects || {})
         .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")))
