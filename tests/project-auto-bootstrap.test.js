@@ -35,11 +35,12 @@ test("only untouched draft projects need automatic bootstrap", () => {
   assert.equal(AutoBootstrap.projectNeedsBootstrap(tasked, "alpha"), false);
 });
 
-test("an existing bootstrap record suppresses the watchdog fallback", () => {
+test("every existing bootstrap record suppresses the creation watchdog", () => {
   assert.equal(AutoBootstrap.bootstrapAlreadyStarted({ alpha: { status: "starting" } }, "alpha"), true);
   assert.equal(AutoBootstrap.bootstrapAlreadyStarted({ alpha: { status: "running" } }, "alpha"), true);
   assert.equal(AutoBootstrap.bootstrapAlreadyStarted({ alpha: { status: "completed" } }, "alpha"), true);
-  assert.equal(AutoBootstrap.bootstrapAlreadyStarted({ alpha: { status: "failed" } }, "alpha"), false);
+  assert.equal(AutoBootstrap.bootstrapAlreadyStarted({ alpha: { status: "failed" } }, "alpha"), true);
+  assert.equal(AutoBootstrap.bootstrapAlreadyStarted({ alpha: { status: "cancelled" } }, "alpha"), true);
   assert.equal(AutoBootstrap.bootstrapAlreadyStarted({}, "alpha"), false);
 });
 
@@ -54,9 +55,10 @@ test("service worker loads GitHub issue bootstrap ownership and planner recovery
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
   assert.match(entry, /project-github-bootstrap\.js/);
   assert.match(entry, /project-auto-bootstrap\.js/);
+  assert.match(entry, /project-github-resume\.js/);
   assert.match(entry, /AutoPrompterProjectAutoBootstrap\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectPlanRecovery\.start\(\)/);
   assert.match(api, /bootstrapStarts/);
   assert.match(api, /startBootstrapOnce/);
-  assert.equal(manifest.version, "4.0.1");
+  assert.equal(manifest.version, "4.0.2");
 });
