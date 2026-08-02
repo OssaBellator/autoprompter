@@ -131,7 +131,7 @@ test("cyclic and unknown proposal dependencies are repaired locally with diagnos
   assert.ok(compiled.diagnostics.some(item => item.code === "PLAN_DEPENDENCY_IGNORED"));
 });
 
-test("extension manifest loads the full-auto planner entry point", () => {
+test("extension manifest loads the task-board planner entry point", () => {
   const root = path.join(__dirname, "..");
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
   const entry = fs.readFileSync(path.join(root, "background-entry.js"), "utf8");
@@ -139,6 +139,6 @@ test("extension manifest loads the full-auto planner entry point", () => {
   assert.equal(manifest.background.service_worker, "background-entry.js");
   assert.match(entry, /background-project-api\.js/);
   assert.match(entry, /planner-fallback\.js/);
-  assert.match(entry, /AutoPrompterProjectFullAuto\.start\(\)/);
-  assert.equal(manifest.version, "3.3.1");
+  assert.match(entry, /AutoPrompterProjectTaskBoardController\.start\(\)/);
+  assert.equal(manifest.version, "3.4.0");
 });
