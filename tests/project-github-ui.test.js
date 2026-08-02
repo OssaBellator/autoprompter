@@ -45,10 +45,28 @@ test("GitHub project UI hidden-state writes are idempotent", () => {
   assert.equal(hidden, false);
 });
 
-test("popup adapter uses bounded startup retries instead of a self-triggering mutation observer", () => {
+test("failed GitHub bootstrap exposes Resume stage even after project reset to draft", () => {
+  const nodes = {
+    resumeProject: { disabled: true, textContent: "Resume", title: "" },
+    projectStatusBadge: { textContent: "draft" },
+    projectInspectOutput: {
+      textContent: JSON.stringify({ autonomousBootstrap: { status: "failed" } })
+    }
+  };
+  const documentApi = { getElementById: id => nodes[id] || null };
+
+  assert.equal(GitHubUi.applyResumeControl(documentApi), true);
+  assert.equal(nodes.resumeProject.disabled, false);
+  assert.equal(nodes.resumeProject.textContent, "Resume stage");
+  assert.match(nodes.resumeProject.title, /issue, task-creation, or worker stage/i);
+});
+
+test("popup adapter uses bounded startup retries and a small idempotent resume refresh", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "project-github-ui.js"), "utf8");
   assert.doesNotMatch(source, /new MutationObserver/);
   assert.equal(GitHubUi.MAX_APPLY_ATTEMPTS, 20);
   assert.equal(GitHubUi.APPLY_RETRY_MS, 50);
+  assert.equal(GitHubUi.RESUME_REFRESH_MS, 250);
   assert.match(source, /attempts < MAX_APPLY_ATTEMPTS/);
+  assert.match(source, /setInterval\(\(\) => applyResumeControl/);
 });
