@@ -97,14 +97,21 @@ test("role jobs disable continuity and preserve bounded interruption settings", 
   assert.equal(settings.contextThresholdPercent, 98);
 });
 
-test("extension loads the role runner after the primary content runtime", () => {
+test("extension adapts role jobs into the existing guarded content submitter", () => {
   const root = path.join(__dirname, "..");
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
   const entry = fs.readFileSync(path.join(root, "background-entry.js"), "utf8");
   const roleRunner = fs.readFileSync(path.join(root, "project-role-runner.js"), "utf8");
+  const content = fs.readFileSync(path.join(root, "content.js"), "utf8");
 
-  assert.deepEqual(manifest.content_scripts[0].js.slice(-2), ["content.js", "project-role-runner.js"]);
+  assert.deepEqual(manifest.content_scripts[0].js.slice(-2), ["project-role-runner.js", "content.js"]);
   assert.match(entry, /AutoPrompterProjectOrchestrator\.start\(\)/);
   assert.match(roleRunner, /RUN_PROJECT_ROLE_JOB/);
+  assert.match(roleRunner, /type: "RUN_PROJECT_BOOTSTRAP_JOB"/);
+  assert.match(roleRunner, /PROJECT_ROLE_RESULT/);
+  assert.match(roleRunner, /PROJECT_ROLE_ERROR/);
+  assert.match(roleRunner, /activeJobs\.has\(message\.jobId\)/);
+  assert.match(content, /message\.type === "RUN_PROJECT_BOOTSTRAP_JOB"/);
+  assert.doesNotMatch(content, /PROJECT_ROLE_RESULT/);
   assert.equal(manifest.version, "3.2.0");
 });
