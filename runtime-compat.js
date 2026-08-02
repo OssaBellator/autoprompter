@@ -4,7 +4,7 @@
   const MESSAGE_SCOPE = "AUTOPROMPTER_RUNTIME";
   const PROJECT_RUNTIME_PROBE = "GET_PROJECT_BOOTSTRAP";
   const PROJECT_RUNTIME_PROBE_ID = "__autoprompter_runtime_probe__";
-  const RUNTIME_COMPATIBILITY_BUILD = "project-bootstrap-runtime-v3";
+  const RUNTIME_COMPATIBILITY_BUILD = "github-issue-pr-runtime-v4";
   const RELOAD_MARKER_KEY = "autoprompterRuntimeCompatibilityReload";
   const RELOAD_COOLDOWN_MS = 60_000;
   const RUNTIME_MISMATCH_MESSAGE = [
@@ -138,12 +138,22 @@
     return gate;
   }
 
+  function appendProjectModeAdapter(chromeApi, documentApi) {
+    if (documentApi.getElementById("autoprompterGitHubIssueUiLoader")) return;
+    const adapter = documentApi.createElement("script");
+    adapter.id = "autoprompterGitHubIssueUiLoader";
+    adapter.src = chromeApi.runtime.getURL("project-github-ui.js");
+    adapter.defer = true;
+    (documentApi.head || documentApi.documentElement).append(adapter);
+  }
+
   function loadProjectUi(chromeApi, documentApi = globalThis.document) {
     if (!documentApi?.createElement || documentApi.getElementById("autoprompterProjectUiLoader")) return false;
     const script = documentApi.createElement("script");
     script.id = "autoprompterProjectUiLoader";
     script.src = chromeApi.runtime.getURL("project-ui.js");
     script.defer = true;
+    script.addEventListener("load", () => appendProjectModeAdapter(chromeApi, documentApi), { once: true });
     (documentApi.head || documentApi.documentElement).append(script);
     return true;
   }
@@ -163,6 +173,7 @@
     attemptRuntimeReload,
     probeProjectRuntime,
     installRuntimeCompatibilityGate,
+    appendProjectModeAdapter,
     loadProjectUi
   };
 
