@@ -2,15 +2,15 @@
 
 (() => {
   const MESSAGE_SCOPE = "AUTOPROMPTER_RUNTIME";
-  const PROJECT_RUNTIME_PROBE = "GET_PROJECT_BOOTSTRAP";
-  const PROJECT_RUNTIME_PROBE_ID = "__autoprompter_runtime_probe__";
-  const RUNTIME_COMPATIBILITY_BUILD = "github-issue-pr-runtime-v4";
+  const RUNTIME_PROBE = "GET_SCHEDULER_STATE";
+  const RUNTIME_COMPATIBILITY_BUILD = "autocontinue-project-folders-v5";
   const RELOAD_MARKER_KEY = "autoprompterRuntimeCompatibilityReload";
   const RELOAD_COOLDOWN_MS = 60_000;
+  const RETIRED_PROJECT_MESSAGE = "Project execution was retired in AutoPrompter 5. Projects now organize chats, repository details, and notes only.";
   const RUNTIME_MISMATCH_MESSAGE = [
     "AutoPrompter's popup and background runtime are out of sync.",
     "The extension attempted one automatic reload.",
-    "Update the unpacked extension from the latest repository files, open edge://extensions, press Reload, then refresh open ChatGPT tabs."
+    "Update the unpacked extension, open edge://extensions, press Reload, then refresh open ChatGPT tabs."
   ].join(" ");
 
   function messageArgument(args) {
@@ -19,9 +19,16 @@
     return null;
   }
 
-  function isProjectRuntimeCommand(command) {
+  function isLegacyProjectCommand(command) {
     const type = String(command || "");
     return type.includes("PROJECT") || type.includes("PLANNER");
+  }
+
+  function retiredProjectResponse(command) {
+    const type = String(command || "");
+    if (type === "GET_PROJECTS") return { ok: true, projects: [], activeProjectId: null };
+    if (type === "GET_PROJECT_BOOTSTRAP") return { ok: true, bootstrap: null };
+    return { ok: false, error: RETIRED_PROJECT_MESSAGE };
   }
 
   function isUnknownRuntimeCommand(response, command) {
@@ -84,24 +91,19 @@
     return { status: "mismatch", fingerprint };
   }
 
-  async function probeProjectRuntime(chromeApi, sendMessage, options = {}) {
+  async function probeRuntime(chromeApi, sendMessage, options = {}) {
     let response;
     try {
-      response = await sendMessage({
-        scope: MESSAGE_SCOPE,
-        type: PROJECT_RUNTIME_PROBE,
-        projectId: PROJECT_RUNTIME_PROBE_ID
-      });
+      response = await sendMessage({ scope: MESSAGE_SCOPE, type: RUNTIME_PROBE });
     } catch {
       return { status: "unavailable" };
     }
 
     const storage = chromeApi?.storage?.local;
-    if (!isUnknownRuntimeCommand(response, PROJECT_RUNTIME_PROBE)) {
+    if (!isUnknownRuntimeCommand(response, RUNTIME_PROBE)) {
       if (storage) await safeStorageRemove(storage, RELOAD_MARKER_KEY);
       return { status: "compatible", fingerprint: runtimeFingerprint(chromeApi) };
     }
-
     return attemptRuntimeReload(chromeApi, options);
   }
 
@@ -111,23 +113,23 @@
 
     const originalSendMessage = runtime.sendMessage.bind(runtime);
     let runtimeMismatch = false;
-    const gate = probeProjectRuntime(chromeApi, originalSendMessage, options)
-      .then(result => {
-        runtimeMismatch = result?.status === "mismatch";
-        return result;
-      });
+    const gate = probeRuntime(chromeApi, originalSendMessage, options).then(result => {
+      runtimeMismatch = result?.status === "mismatch";
+      return result;
+    });
 
     runtime.sendMessage = (...args) => gate.then(async () => {
       const message = messageArgument(args);
-      const isProjectCommand = message?.scope === MESSAGE_SCOPE && isProjectRuntimeCommand(message.type);
-
-      if (runtimeMismatch && isProjectCommand) {
+      const runtimeCommand = message?.scope === MESSAGE_SCOPE;
+      if (runtimeCommand && isLegacyProjectCommand(message.type)) {
+        return retiredProjectResponse(message.type);
+      }
+      if (runtimeMismatch && runtimeCommand) {
         await attemptRuntimeReload(chromeApi, options);
         return runtimeMismatchResponse();
       }
-
       const response = await originalSendMessage(...args);
-      if (isProjectCommand && isUnknownRuntimeCommand(response, message.type)) {
+      if (runtimeCommand && isUnknownRuntimeCommand(response, message.type)) {
         runtimeMismatch = true;
         await attemptRuntimeReload(chromeApi, options);
         return runtimeMismatchResponse();
@@ -138,49 +140,63 @@
     return gate;
   }
 
-  function appendProjectModeAdapter(chromeApi, documentApi) {
-    if (documentApi.getElementById("autoprompterGitHubIssueUiLoader")) return;
-    const adapter = documentApi.createElement("script");
-    adapter.id = "autoprompterGitHubIssueUiLoader";
-    adapter.src = chromeApi.runtime.getURL("project-github-ui.js");
-    adapter.defer = true;
-    (documentApi.head || documentApi.documentElement).append(adapter);
-  }
-
-  function loadProjectUi(chromeApi, documentApi = globalThis.document) {
-    if (!documentApi?.createElement || documentApi.getElementById("autoprompterProjectUiLoader")) return false;
+  function appendScript(chromeApi, documentApi, id, path, onLoad = null) {
+    if (documentApi.getElementById(id)) return false;
     const script = documentApi.createElement("script");
-    script.id = "autoprompterProjectUiLoader";
-    script.src = chromeApi.runtime.getURL("project-ui.js");
+    script.id = id;
+    script.src = chromeApi.runtime.getURL(path);
     script.defer = true;
-    script.addEventListener("load", () => appendProjectModeAdapter(chromeApi, documentApi), { once: true });
+    if (onLoad) script.addEventListener("load", onLoad, { once: true });
     (documentApi.head || documentApi.documentElement).append(script);
     return true;
   }
 
+  function loadProjectFolders(chromeApi, documentApi = globalThis.document) {
+    if (!documentApi?.createElement) return false;
+    const load = () => appendScript(
+      chromeApi,
+      documentApi,
+      "autoprompterProjectFoldersCore",
+      "project-folders.js",
+      () => appendScript(
+        chromeApi,
+        documentApi,
+        "autoprompterProjectFoldersUi",
+        "project-folders-ui.js"
+      )
+    );
+    if (documentApi.readyState === "loading") {
+      documentApi.addEventListener("DOMContentLoaded", load, { once: true });
+      return true;
+    }
+    return load();
+  }
+
   const exported = {
     MESSAGE_SCOPE,
-    PROJECT_RUNTIME_PROBE,
+    RUNTIME_PROBE,
     RELOAD_MARKER_KEY,
     RELOAD_COOLDOWN_MS,
     RUNTIME_COMPATIBILITY_BUILD,
+    RETIRED_PROJECT_MESSAGE,
     RUNTIME_MISMATCH_MESSAGE,
-    isProjectRuntimeCommand,
+    isLegacyProjectCommand,
+    retiredProjectResponse,
     isUnknownRuntimeCommand,
     runtimeFingerprint,
     shouldAttemptRuntimeReload,
     runtimeMismatchResponse,
     attemptRuntimeReload,
-    probeProjectRuntime,
+    probeRuntime,
     installRuntimeCompatibilityGate,
-    appendProjectModeAdapter,
-    loadProjectUi
+    appendScript,
+    loadProjectFolders
   };
 
   if (typeof module === "object" && module.exports) {
     module.exports = exported;
   } else if (globalThis.chrome?.runtime?.sendMessage) {
     installRuntimeCompatibilityGate(globalThis.chrome);
-    loadProjectUi(globalThis.chrome);
+    loadProjectFolders(globalThis.chrome);
   }
 })();
