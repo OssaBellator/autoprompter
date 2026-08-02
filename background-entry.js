@@ -14,6 +14,7 @@ importScripts(
 );
 importScripts(
   "project-orchestrator.js",
+  "project-role-kick.js",
   "project-task-board-controller.js",
   "bootstrap-upgrade.js"
 );
@@ -30,6 +31,7 @@ if (
   || !globalThis.AutoPrompterProjectAutoBootstrap
   || !globalThis.AutoPrompterProjectStore
   || !globalThis.AutoPrompterProjectOrchestrator
+  || !globalThis.AutoPrompterProjectRoleKick
   || !globalThis.AutoPrompterProjectTaskBoardController
   || !globalThis.AutoPrompterBootstrapUpgrade
 ) {
@@ -43,6 +45,7 @@ globalThis.AutoPrompterProjectAutoStore.install(globalThis.AutoPrompterProjectSt
 globalThis.AutoPrompterProjectTaskBoard.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterProjectAdmin.start();
 globalThis.AutoPrompterProjectOrchestrator.start();
+globalThis.AutoPrompterProjectRoleKick.start();
 globalThis.AutoPrompterProjectTaskBoardController.start();
 globalThis.AutoPrompterProjectAutoBootstrap.start();
 globalThis.AutoPrompterBootstrapUpgrade.start();
