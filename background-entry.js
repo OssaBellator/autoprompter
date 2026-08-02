@@ -1,6 +1,6 @@
 "use strict";
 
-importScripts("background.js", "planner-compiler.js", "planner-fallback.js");
+importScripts("background.js", "background-project-api.js", "planner-compiler.js", "planner-fallback.js");
 importScripts(
   "repository-bootstrap.js",
   "project-action-protocol.js",
@@ -10,7 +10,8 @@ importScripts(
 );
 
 if (
-  !globalThis.AutoPrompterPlannerCompiler
+  !globalThis.AutoPrompterBackgroundProjectApi
+  || !globalThis.AutoPrompterPlannerCompiler
   || !globalThis.AutoPrompterPlannerFallback
   || !globalThis.AutoPrompterProjectStore
   || !globalThis.AutoPrompterRepositoryBootstrap
