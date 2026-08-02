@@ -108,6 +108,7 @@ test("extension adapts role and repository action jobs into the existing guarded
   assert.deepEqual(manifest.content_scripts[0].js.slice(-2), ["project-role-runner.js", "content.js"]);
   assert.match(entry, /AutoPrompterProjectOrchestrator\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectFullAuto\.start\(\)/);
+  assert.match(entry, /AutoPrompterProjectAdmin\.start\(\)/);
   assert.match(roleRunner, /RUN_PROJECT_ROLE_JOB/);
   assert.match(roleRunner, /RUN_PROJECT_ACTION_JOB/);
   assert.match(roleRunner, /type: "RUN_PROJECT_BOOTSTRAP_JOB"/);
@@ -117,6 +118,6 @@ test("extension adapts role and repository action jobs into the existing guarded
   assert.match(content, /message\.type === "RUN_PROJECT_BOOTSTRAP_JOB"/);
   assert.doesNotMatch(content, /PROJECT_ACTION_RESULT/);
   assert.match(projectUi, /Advanced recovery and diagnostics/);
-  assert.match(projectUi, /projectModelVerified/);
-  assert.equal(manifest.version, "3.3.0");
+  assert.match(projectUi, /deleteExistingProject/);
+  assert.equal(manifest.version, "3.3.1");
 });
