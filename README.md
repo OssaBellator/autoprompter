@@ -1,6 +1,8 @@
 # AutoPrompter for ChatGPT
 
-Current release: **4.0.0**
+Current release: **4.0.1**
+
+- Fixes the extension popup becoming unresponsive because the GitHub Project Mode UI adapter could trigger itself continuously through a document-wide mutation observer.
 
 AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that coordinates work through ChatGPT Web. It does not call an inference API and it does not store a GitHub token.
 
@@ -88,7 +90,15 @@ npm test
 npm run check
 ```
 
-The test suite covers scheduler behavior, ChatGPT DOM guardrails, GitHub issue-manifest validation, persistent issue workers, pull-request review and merge transitions, dependency unlocking after merges, and unlimited recoverable connection-interruption retries.
+The tests cover planner-created issue manifests, persistent worker conversations, pull-request revisions, review-and-merge decisions, dependency unlocking, popup startup safety, normal AutoContinue interruption recovery, and syntax validation for every runtime module.
+
+## Known limitations
+
+- ChatGPT DOM changes can break selectors.
+- Hidden or inactive managed tabs may be throttled by the browser.
+- GitHub plugin availability and write capability vary by plan, workspace, authorization, and product surface.
+- Platform safety controls may block individual repository actions.
+- Returned repository evidence is structurally validated but is still supplied by the model or connected tool.
 
 ## License
 
