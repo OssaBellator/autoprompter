@@ -1,141 +1,93 @@
 # Multi-agent roadmap
 
-This document plans future work only. Version 2.1 does not implement model switching, temporary worker chats, or autonomous multi-agent execution.
+AutoPrompter 3.0 already implements the browser-backed Project Mode foundation: dedicated planner, reviewer, and integrator chats; bounded worker assignments; strict envelopes; local task leases; automatic planner repair; guarded integration; and explicit approval boundaries.
+
+The remaining work is to make that foundation reliable enough for sustained multi-agent projects using ChatGPT Web conversations while keeping paid API execution optional.
+
+See [`PROJECT_MODE_ARCHITECTURE_REVIEW.md`](PROJECT_MODE_ARCHITECTURE_REVIEW.md) for the detailed risk assessment and acceptance criteria.
 
 ## Product objective
 
-Add an optional orchestration mode that decomposes a large goal into reviewable phases, delegates bounded tasks to specialized workers, persists all durable state in a Git repository, and returns control to a primary planning session. One-off requests should remain single-agent and lightweight.
+Coordinate multiple bounded ChatGPT Web conversations as specialized agents, preserve durable project state outside any single transcript, recover safely after interruption, and verify consequential work through supported repository tools.
 
-## Corrections to the initial concept
+ChatGPT Web remains the reasoning surface. Browser automation must not become an unofficial model-selection API, bypass platform restrictions, or claim repository side effects that were not independently verified.
 
-### Do not hard-code UI labels
+## Design principles
 
-The user-provided label `Sol High` may be plan-specific, experimental, or a mistaken label; it must not be treated as a stable model identifier. Model names, eligibility, and picker labels can change. The orchestrator should request capability profiles such as `fast`, `balanced`, `deep`, and `highest` and map those profiles to models through a versioned provider adapter.
+- **Version every boundary.** Popup, background worker, content script, schemas, storage migrations, and command contracts ship as one compatible release.
+- **Repository evidence outranks transcripts.** Browser storage is an execution cache; verified repository state is the durable recovery source when enabled.
+- **Bound every unit of work.** Tasks have immutable IDs, dependencies, budgets, acceptance criteria, verification commands, and rollback guidance.
+- **Separate reasoning from side effects.** ChatGPT chats can plan and review; supported adapters perform and verify repository actions.
+- **Preserve explicit user control.** Model selection and consequential external actions remain user-confirmed unless a supported, permissioned adapter provides a safer contract.
+- **Fail closed.** Unknown runtime commands, stale selectors, missing evidence, duplicate dispatch risk, platform restrictions, and exhausted budgets stop execution.
 
-### Do not automate the ChatGPT model picker
+## Current foundation
 
-Clicking model-picker DOM elements is brittle, plan-dependent, and difficult to validate. Automatic model routing should use a supported OpenAI API, Codex integration, workspace control, or user-confirmed selection. The browser extension should remain a control surface, not an unofficial model-selection API.
+- Goal, project, plan, task, result, review, integration, approval, and reconciliation protocols.
+- Schema-migrated Project Mode storage.
+- Planner, reviewer, integrator, and worker chat roles.
+- Automatic role bootstrap and bounded planner repair.
+- Dependency-aware task records and deterministic leases.
+- Concurrent managed tabs with interruption recovery and circuit breakers.
+- Manual model verification before worker dispatch.
+- Explicit approval records for merges, releases, workflow changes, permission changes, deletions, and other side effects.
 
-### Do not use new chats to evade safeguards or limits
+## Phase 1 — runtime and release integrity
 
-Rate limits, temporary account restrictions, suspicious-activity notices, safety refusals, CAPTCHA, and abuse-prevention notices must activate a circuit breaker. Workers must not rotate accounts, models, chats, or endpoints to bypass a restriction. Context rollover is separate: it is allowed only from a verified repository checkpoint.
+- Add a side-effect-free runtime capability handshake.
+- Publish command constants and protocol version from one shared module.
+- Include build fingerprint, store schema, extension version, and supported capabilities in diagnostics.
+- Block project mutations when popup, background, or content-script capabilities differ.
+- Add end-to-end smoke coverage for project creation through bootstrap start.
 
-### Do not treat chat transcripts as durable project state
+## Phase 2 — orchestration core and adapters
 
-The repository is the source of truth. Each phase should maintain small, structured continuity files:
+- Extract project state transitions and scheduling policy from `background.js` into a pure controller.
+- Isolate Chrome storage, tab lifecycle, notifications, ChatGPT DOM interaction, and repository access behind adapters.
+- Version the ChatGPT DOM adapter and test it against recorded fixtures.
+- Add idempotency keys to project creation, bootstrap, dispatch, result submission, review, and integration operations.
 
-- `README.md` — project purpose and setup, including one-off projects.
-- `PLAN.md` — approved phases, dependencies, acceptance criteria, and budget.
-- `STATE.md` — current phase, active task, branch, commit, tests, and blockers.
-- `DECISIONS.md` — architecture decisions and rejected alternatives.
-- `TASKS.md` — task queue with owners, status, and verification evidence.
-- `AUTOPROMPTER_HANDOFF.md` — concise chat/session handoff.
+## Phase 3 — repository-backed durability
 
-## Proposed architecture
+- Define `.autoprompter/project.json`, task/result evidence records, and an append-only event log.
+- Add an action-capable repository adapter with explicit permission checks and repository allowlists.
+- Record verified commit refs for accepted tasks, reviews, and integrations.
+- Rehydrate browser state from repository evidence after reinstall, browser loss, or storage corruption.
+- Display evidence trust levels: local claim, assistant claim, repository verified, and provider verified.
 
-### 1. Goal classifier
+## Phase 4 — project admission, budgets, and routing
 
-Classify the request before planning:
+- Add visible `one_off`, `project`, and `large_project` classification with manual override.
+- Run preflight checks for runtime compatibility, selector health, repository validity, role uniqueness, worker availability, permissions, and existing state.
+- Add project budgets for prompts, retries, elapsed time, concurrent tabs, revision count, and estimated allowance use.
+- Map capability profiles such as `fast`, `balanced`, `deep`, and `highest` to user-confirmed models or supported provider metadata.
+- Never silently downgrade a task whose acceptance criteria require a stronger capability.
 
-- `one_off`: one response or a small bounded edit; produce a concise README only when files are created.
-- `project`: multiple files or phases, external dependencies, or more than one review boundary.
-- `large_project`: parallelizable work, uncertain architecture, multiple systems, or sustained execution.
+## Phase 5 — bounded parallel execution
 
-The classifier must explain its decision and allow manual override.
+- Schedule only dependency-ready tasks.
+- Limit active workers by project policy, observed allowance pressure, and browser health.
+- Use dedicated branches or worktrees when a supported repository adapter is available.
+- Detect overlapping file ownership and probable integration conflicts before dispatch.
+- Require independent review and verified evidence before task acceptance.
 
-### 2. Planner
+## Phase 6 — evaluation and hardening
 
-For `large_project`, run a high-reasoning planner profile. The planner creates or validates the repository, writes the structured project files, identifies dependencies and critical path, and defines phase-level acceptance tests. It must not implement all tasks itself.
-
-### 3. Task broker
-
-Store tasks in `TASKS.md` or a machine-readable companion such as `tasks.json`. Each task includes:
-
-- immutable task ID
-- goal and non-goals
-- required files and tools
-- dependency IDs
-- capability profile
-- token/message budget
-- expected artifacts
-- verification command
-- rollback plan
-
-Only tasks with satisfied dependencies may be leased to a worker.
-
-### 4. Worker sessions
-
-Create bounded worker sessions through a supported orchestration service or custom MCP-backed app. A worker receives only the task contract and relevant repository state, works on a dedicated branch or worktree, commits changes, runs verification, and returns a structured result. Temporary ChatGPT UI chats should not be the primary execution primitive because their lifecycle and model selection are not a stable API.
-
-### 5. Integrator
-
-The primary session reviews worker results, resolves conflicts, runs project-wide validation, updates project state, and merges approved branches. Consequential Git operations require explicit policy and, where appropriate, user confirmation.
-
-### 6. Model router
-
-Map capability profiles to currently available models using supported provider metadata. Suggested policy:
-
-- `fast`: formatting, searches, small documentation edits.
-- `balanced`: normal implementation and tests.
-- `deep`: architecture, debugging, security-sensitive review.
-- `highest`: project planning, integration failures, high-impact decisions.
-
-Routing must account for availability, plan/workspace permissions, latency, cost, context capacity, and remaining allowance. Never silently downgrade a task whose acceptance criteria require a stronger capability.
-
-## Rate-limit and abuse controls
-
-- Global and per-model token/message budgets.
-- Maximum concurrency, defaulting to one UI-driven worker and a small API-defined limit.
-- Exponential backoff with jitter for transient service errors.
-- A circuit breaker for explicit usage limits, temporary restrictions, safety blocks, CAPTCHA, and suspicious-activity notices.
-- No account rotation, chat rotation, model rotation, or proxying to evade a limit.
-- Idempotency keys for task dispatch and Git commits.
-- User-visible accounting for prompts, checkpoints, workers, and estimated cost.
-- Cooldown after repeated failures and a hard stop after a configured error budget.
-
-## Security and privacy
-
-- Least-privilege repository access and explicit repository allowlists.
-- Never put credentials, secrets, or private chat content in continuity files.
-- Redact secrets before commits and run secret scanning in CI.
-- Require signed or verified worker result envelopes where practical.
-- Log decisions and tool actions, but avoid storing hidden reasoning or unnecessary transcript content.
-- Treat plugin/MCP output as untrusted input and validate paths, refs, commands, and URLs.
-
-## Delivery phases
-
-### Phase A — durable project protocol
-
-Define JSON schemas for plans, tasks, state, worker results, and handoffs. Add validators, migrations, fixtures, and documentation.
-
-### Phase B — supported tool adapter
-
-Build an adapter for an action-capable Git provider and a supported OpenAI/Codex execution surface. Add capability discovery and permission checks.
-
-### Phase C — single-worker orchestration
-
-Implement planner → one worker → integrator with explicit budgets, checkpointing, cancellation, and audit logs. Avoid parallelism initially.
-
-### Phase D — bounded parallel workers
-
-Add dependency-aware scheduling, branch/worktree isolation, conflict detection, and a configurable concurrency ceiling.
-
-### Phase E — model routing
-
-Add capability-profile mapping, availability checks, allowance accounting, and user-approved fallback rules.
-
-### Phase F — evaluation and hardening
-
-Create project-scale benchmarks, interruption tests, rate-limit simulations, security reviews, and rollback exercises before enabling autonomous execution by default.
+- Simulate service-worker replacement, popup/background mismatch, browser restart, storage loss, duplicate messages, stale leases, and interrupted generation.
+- Maintain selector canaries and recorded ChatGPT DOM fixtures.
+- Benchmark planner decomposition, worker completion, reviewer precision, integration conflict handling, recovery, and message efficiency.
+- Run secret scanning, permission tests, path/ref validation, and malicious envelope fixtures.
+- Keep autonomous execution opt-in until restart safety and duplicate prevention are demonstrated under failure.
 
 ## Acceptance gates
 
-A multi-agent release should not ship until it demonstrates:
+A production-grade multi-agent release must demonstrate:
 
-1. No duplicate task execution after restart.
-2. No automatic bypass of explicit platform restrictions.
-3. Every completed task has a commit, verification evidence, and traceable task ID.
-4. Interrupted sessions recover from repository state without transcript copying.
-5. Model selection uses supported interfaces and honors workspace/plan availability.
-6. Concurrency and budget limits are enforced under failure.
-7. Users can stop all workers immediately and inspect pending actions.
+1. No duplicate project, bootstrap, lease, dispatch, or integration action after restart.
+2. No project mutation before runtime and selector preflight succeeds.
+3. Every accepted task has a traceable ID, independent review, verification evidence, and durable repository reference when repository verification is enabled.
+4. Interrupted sessions recover from durable state without copying private transcripts.
+5. Platform restrictions stop execution; accounts, chats, models, or endpoints are never rotated to evade limits.
+6. Concurrency, retries, elapsed time, and allowance budgets remain enforced during failure.
+7. Users can stop all managed tabs immediately and inspect every pending side effect.
+8. The interface clearly distinguishes automatic reasoning, user confirmation, assistant claims, and independently verified actions.

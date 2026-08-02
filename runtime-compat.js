@@ -4,16 +4,13 @@
   const MESSAGE_SCOPE = "AUTOPROMPTER_RUNTIME";
   const PROJECT_RUNTIME_PROBE = "GET_PROJECT_BOOTSTRAP";
   const PROJECT_RUNTIME_PROBE_ID = "__autoprompter_runtime_probe__";
+  const RUNTIME_COMPATIBILITY_BUILD = "project-bootstrap-runtime-v2";
   const RELOAD_MARKER_KEY = "autoprompterRuntimeCompatibilityReload";
   const RELOAD_COOLDOWN_MS = 60_000;
-  const GUARDED_PROJECT_COMMANDS = new Set([
-    "CREATE_PROJECT",
-    "START_PROJECT_BOOTSTRAP"
-  ]);
   const RUNTIME_MISMATCH_MESSAGE = [
     "AutoPrompter's popup and background runtime are out of sync.",
     "The extension attempted one automatic reload.",
-    "Open edge://extensions, reload AutoPrompter, then reopen this popup."
+    "Update the unpacked extension from the latest repository files, open edge://extensions, press Reload, then refresh open ChatGPT tabs."
   ].join(" ");
 
   function messageArgument(args) {
@@ -22,15 +19,26 @@
     return null;
   }
 
+  function isProjectRuntimeCommand(command) {
+    const type = String(command || "");
+    return type.includes("PROJECT") || type.includes("PLANNER");
+  }
+
   function isUnknownRuntimeCommand(response, command) {
     const error = String(response?.error || "");
     return response?.ok === false && error.includes(`Unknown AutoPrompter runtime command: ${command}`);
   }
 
-  function shouldAttemptRuntimeReload(marker, manifestVersion, now = Date.now()) {
+  function runtimeFingerprint(chromeApi) {
+    const version = chromeApi?.runtime?.getManifest?.().version || "unknown";
+    return `${version}:${RUNTIME_COMPATIBILITY_BUILD}`;
+  }
+
+  function shouldAttemptRuntimeReload(marker, fingerprint, now = Date.now()) {
     if (!marker || typeof marker !== "object") return true;
-    if (String(marker.version || "") !== String(manifestVersion || "unknown")) return true;
-    return now - Number(marker.at || 0) > RELOAD_COOLDOWN_MS;
+    if (String(marker.fingerprint || "") !== String(fingerprint || "unknown")) return true;
+    const attemptedAt = Number(marker.at || 0);
+    return !Number.isFinite(attemptedAt) || now - attemptedAt > RELOAD_COOLDOWN_MS;
   }
 
   function runtimeMismatchResponse() {
@@ -49,6 +57,33 @@
     try { await storage.remove(key); } catch { /* best effort */ }
   }
 
+  async function attemptRuntimeReload(chromeApi, options = {}) {
+    const storage = chromeApi?.storage?.local;
+    const fingerprint = runtimeFingerprint(chromeApi);
+    const version = chromeApi?.runtime?.getManifest?.().version || "unknown";
+    const now = typeof options.now === "function" ? options.now() : Date.now();
+    const stored = storage ? await safeStorageGet(storage, RELOAD_MARKER_KEY) : {};
+    const marker = stored?.[RELOAD_MARKER_KEY];
+
+    if (shouldAttemptRuntimeReload(marker, fingerprint, now) && typeof chromeApi?.runtime?.reload === "function") {
+      if (storage) {
+        await safeStorageSet(storage, {
+          [RELOAD_MARKER_KEY]: {
+            fingerprint,
+            version,
+            build: RUNTIME_COMPATIBILITY_BUILD,
+            at: now
+          }
+        });
+      }
+      chromeApi.runtime.reload();
+      if (options.suspendAfterReload !== false) await new Promise(() => {});
+      return { status: "reloading", fingerprint };
+    }
+
+    return { status: "mismatch", fingerprint };
+  }
+
   async function probeProjectRuntime(chromeApi, sendMessage, options = {}) {
     let response;
     try {
@@ -64,35 +99,19 @@
     const storage = chromeApi?.storage?.local;
     if (!isUnknownRuntimeCommand(response, PROJECT_RUNTIME_PROBE)) {
       if (storage) await safeStorageRemove(storage, RELOAD_MARKER_KEY);
-      return { status: "compatible" };
+      return { status: "compatible", fingerprint: runtimeFingerprint(chromeApi) };
     }
 
-    const manifestVersion = chromeApi?.runtime?.getManifest?.().version || "unknown";
-    const now = typeof options.now === "function" ? options.now() : Date.now();
-    const stored = storage ? await safeStorageGet(storage, RELOAD_MARKER_KEY) : {};
-    const marker = stored?.[RELOAD_MARKER_KEY];
-
-    if (shouldAttemptRuntimeReload(marker, manifestVersion, now) && typeof chromeApi?.runtime?.reload === "function") {
-      if (storage) {
-        await safeStorageSet(storage, {
-          [RELOAD_MARKER_KEY]: { version: manifestVersion, at: now }
-        });
-      }
-      chromeApi.runtime.reload();
-      if (options.suspendAfterReload !== false) await new Promise(() => {});
-      return { status: "reloading" };
-    }
-
-    return { status: "mismatch" };
+    return attemptRuntimeReload(chromeApi, options);
   }
 
-  function installRuntimeCompatibilityGate(chromeApi) {
+  function installRuntimeCompatibilityGate(chromeApi, options = {}) {
     const runtime = chromeApi?.runtime;
     if (!runtime?.sendMessage) return Promise.resolve({ status: "unavailable" });
 
     const originalSendMessage = runtime.sendMessage.bind(runtime);
     let runtimeMismatch = false;
-    const gate = probeProjectRuntime(chromeApi, originalSendMessage)
+    const gate = probeProjectRuntime(chromeApi, originalSendMessage, options)
       .then(result => {
         runtimeMismatch = result?.status === "mismatch";
         return result;
@@ -100,12 +119,17 @@
 
     runtime.sendMessage = (...args) => gate.then(async () => {
       const message = messageArgument(args);
-      const isGuardedProjectCommand = message?.scope === MESSAGE_SCOPE && GUARDED_PROJECT_COMMANDS.has(message.type);
-      if (runtimeMismatch && isGuardedProjectCommand) return runtimeMismatchResponse();
+      const isProjectCommand = message?.scope === MESSAGE_SCOPE && isProjectRuntimeCommand(message.type);
+
+      if (runtimeMismatch && isProjectCommand) {
+        await attemptRuntimeReload(chromeApi, options);
+        return runtimeMismatchResponse();
+      }
 
       const response = await originalSendMessage(...args);
-      if (isGuardedProjectCommand && isUnknownRuntimeCommand(response, message.type)) {
+      if (isProjectCommand && isUnknownRuntimeCommand(response, message.type)) {
         runtimeMismatch = true;
+        await attemptRuntimeReload(chromeApi, options);
         return runtimeMismatchResponse();
       }
       return response;
@@ -119,10 +143,14 @@
     PROJECT_RUNTIME_PROBE,
     RELOAD_MARKER_KEY,
     RELOAD_COOLDOWN_MS,
+    RUNTIME_COMPATIBILITY_BUILD,
     RUNTIME_MISMATCH_MESSAGE,
+    isProjectRuntimeCommand,
     isUnknownRuntimeCommand,
+    runtimeFingerprint,
     shouldAttemptRuntimeReload,
     runtimeMismatchResponse,
+    attemptRuntimeReload,
     probeProjectRuntime,
     installRuntimeCompatibilityGate
   };
