@@ -77,9 +77,18 @@ test("project job cleanup removes keyed and identity-bound records and collects 
 });
 
 test("deleting a project detaches managed tabs without closing browser tabs", async () => {
-  const store = ProjectStore.emptyStore();
-  store.projects.one = project("one", "2026-08-02T01:00:00.000Z");
-  store.activeProjectId = "one";
+  const created = ProjectStore.createProject(ProjectStore.emptyStore(), {
+    projectId: "one",
+    title: "One",
+    goal: "Exercise project deletion without closing browser tabs.",
+    repository: "OssaBellator/autoprompter",
+    defaultBranch: "main",
+    plannerChatId: null,
+    reviewerChatId: null,
+    integratorChatId: null,
+    workerChatIds: []
+  }, () => Date.parse("2026-08-02T01:00:00.000Z"));
+  const store = created.store;
   store.dispatchesByProject.one = {
     dispatch: { projectId: "one", workerTabId: 77 }
   };
