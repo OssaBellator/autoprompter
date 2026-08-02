@@ -216,7 +216,7 @@
     const select = element("projectSelect");
     const title = select?.selectedOptions?.[0]?.textContent?.replace(/\s+·\s+[^·]+$/, "") || projectId;
     const confirmed = globalThis.confirm(
-      `Delete “${title}” from AutoPrompter?\n\nThis removes its local task board, plans, reviews, integration state, and managed tabs. It does not delete GitHub branches or ChatGPT conversations.`
+      `Delete “${title}” from AutoPrompter?\n\nThis removes its local task board, plans, reviews, integration state, and managed tabs. It does not delete GitHub content or ChatGPT conversations.`
     );
     if (!confirmed) return;
 
