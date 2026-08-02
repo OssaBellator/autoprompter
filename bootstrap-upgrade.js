@@ -19,10 +19,11 @@
   }
 
   async function restart(projectIds) {
-    if (typeof root.startProjectBootstrapState !== "function") return;
+    const api = root.AutoPrompterBackgroundProjectApi;
+    if (!api?.startProjectBootstrap) return;
     for (const projectId of projectIds) {
       try {
-        await root.startProjectBootstrapState(projectId);
+        await api.startProjectBootstrap(projectId);
       } catch {
         // The project may already be running, completed, or otherwise ineligible.
       }
