@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AutoPrompter for ChatGPT",
-  "version": "3.4.3",
-  "description": "Turn a planner task list into independent Git branches and fresh ChatGPT worker chats, then review and integrate accepted work.",
+  "version": "4.0.0",
+  "description": "Create GitHub issues with a planner, run one persistent ChatGPT worker per issue, and review or merge each pull request.",
   "minimum_chrome_version": "102",
   "permissions": [
     "storage",
