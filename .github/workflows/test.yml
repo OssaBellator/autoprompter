@@ -33,6 +33,23 @@ jobs:
           PY
       - name: Apply guarded source transformations
         run: node scripts/apply-composer-project-tabs-fix.js
+      - name: Refresh Project Mode source assertion
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("tests/popup-source.test.js")
+          source = path.read_text()
+          before = '  assert.match(popupHtml, /Planner, reviewer, and integrator prompts remain manual/);'
+          after = '\n'.join([
+              '  assert.match(popupHtml, /id="projectExistingTab"/);',
+              '  assert.match(popupHtml, /id="projectNewTab"/);',
+              '  assert.match(popupHtml, /id="projectExistingPanel"/);',
+              '  assert.match(popupHtml, /id="projectNewPanel"/);'
+          ])
+          if source.count(before) != 1:
+              raise SystemExit("Expected exactly one obsolete Project Mode assertion")
+          path.write_text(source.replace(before, after))
+          PY
       - name: Validate generated source
         run: |
           npm test
