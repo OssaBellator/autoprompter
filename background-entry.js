@@ -16,10 +16,12 @@ importScripts(
   "project-task-board.js",
   "project-github-workflow.js",
   "project-github-persistence.js",
+  "project-github-envelope-recovery.js",
   "project-fresh-dispatch.js",
   "project-github-dispatch.js",
   "project-auto-bootstrap.js",
-  "project-plan-recovery.js"
+  "project-plan-recovery.js",
+  "project-github-resume.js"
 );
 importScripts(
   "project-orchestrator.js",
@@ -43,10 +45,12 @@ if (
   || !globalThis.AutoPrompterProjectTaskBoard
   || !globalThis.AutoPrompterGitHubIssueWorkflow
   || !globalThis.AutoPrompterGitHubIssuePersistence
+  || !globalThis.AutoPrompterGitHubIssueEnvelopeRecovery
   || !globalThis.AutoPrompterProjectFreshDispatch
   || !globalThis.AutoPrompterGitHubIssueDispatch
   || !globalThis.AutoPrompterProjectAutoBootstrap
   || !globalThis.AutoPrompterProjectPlanRecovery
+  || !globalThis.AutoPrompterGitHubIssueResume
   || !globalThis.AutoPrompterProjectStore
   || !globalThis.AutoPrompterProjectOrchestrator
   || !globalThis.AutoPrompterProjectRoleKick
@@ -65,7 +69,9 @@ globalThis.AutoPrompterProjectAutoStore.install(globalThis.AutoPrompterProjectSt
 globalThis.AutoPrompterProjectTaskBoard.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterGitHubIssueWorkflow.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterGitHubIssuePersistence.install(globalThis.AutoPrompterProjectStore);
+globalThis.AutoPrompterGitHubIssueEnvelopeRecovery.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterGitHubIssueDispatch.install();
+globalThis.AutoPrompterGitHubIssueResume.install();
 globalThis.AutoPrompterProjectAdmin.start();
 globalThis.AutoPrompterProjectPlanRecovery.start();
 globalThis.AutoPrompterProjectOrchestrator.start();

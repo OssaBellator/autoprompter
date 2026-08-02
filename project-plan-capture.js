@@ -9,11 +9,18 @@
   const POLL_MS = 2000;
   const STABLE_MS = 1500;
   const RETRY_MS = 5000;
+  const ISSUES_BEGIN = "AUTOPROMPTER_ISSUES_BEGIN";
+  const ISSUES_END = "AUTOPROMPTER_ISSUES_END";
   const PROPOSAL_BEGIN = "AUTOPROMPTER_PROPOSAL_BEGIN";
   const PROPOSAL_END = "AUTOPROMPTER_PROPOSAL_END";
   const PLAN_BEGIN = "AUTOPROMPTER_PLAN_BEGIN";
   const PLAN_END = "AUTOPROMPTER_PLAN_END";
   const ROLE_READY = "AUTOPROMPTER_ROLE_READY: planner";
+  const ENVELOPES = [
+    [ISSUES_BEGIN, ISSUES_END],
+    [PROPOSAL_BEGIN, PROPOSAL_END],
+    [PLAN_BEGIN, PLAN_END]
+  ];
   let timer = null;
   let checking = false;
   let observed = null;
@@ -52,35 +59,36 @@
     return nodes;
   }
 
-  function isPlannerCandidate(text) {
-    const value = String(text || "").trim();
-    const completeEnvelope = (
-      value.includes(PROPOSAL_BEGIN) && value.includes(PROPOSAL_END)
-    ) || (
-      value.includes(PLAN_BEGIN) && value.includes(PLAN_END)
-    );
-    if (completeEnvelope) return true;
-    if (value.includes(ROLE_READY)) return false;
-    return value.length >= 40;
+  function latestCompleteEnvelope(value) {
+    const text = String(value || "").trim();
+    if (!text || text.includes(ROLE_READY) && !text.includes(ISSUES_BEGIN)) return "";
+    for (const [begin, end] of ENVELOPES) {
+      const finish = text.lastIndexOf(end);
+      if (finish < 0) continue;
+      const start = text.lastIndexOf(begin, finish);
+      if (start < 0 || start >= finish) continue;
+      return text.slice(start, finish + end.length).trim();
+    }
+    return "";
   }
 
   function latestPlannerOutput() {
     const nodes = assistantNodes();
-    for (let index = nodes.length - 1; index >= 0; index -= 1) {
-      const node = nodes[index];
-      const content = node.querySelector?.('[data-message-content], .markdown, .prose') || node;
-      const text = String(content?.innerText || content?.textContent || "").trim();
-      if (!isPlannerCandidate(text)) continue;
-      const identity = node.getAttribute?.("data-turn-id")
-        || node.getAttribute?.("data-message-id")
-        || node.getAttribute?.("data-testid")
-        || `assistant-${index}`;
-      return {
-        text,
-        signature: `${identity}:${text.length}:${hashText(text)}`
-      };
-    }
-    return null;
+    const index = nodes.length - 1;
+    const node = nodes[index];
+    if (!node) return null;
+    const content = node.querySelector?.('[data-message-content], .markdown, .prose') || node;
+    const raw = String(content?.innerText || content?.textContent || "").trim();
+    const text = latestCompleteEnvelope(raw);
+    if (!text) return null;
+    const identity = node.getAttribute?.("data-turn-id")
+      || node.getAttribute?.("data-message-id")
+      || node.getAttribute?.("data-testid")
+      || `assistant-${index}`;
+    return {
+      text,
+      signature: `${identity}:${text.length}:${hashText(text)}`
+    };
   }
 
   async function send(scope, type, extra = {}) {

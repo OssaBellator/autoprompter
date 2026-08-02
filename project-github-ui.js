@@ -7,7 +7,9 @@
 })(typeof globalThis !== "undefined" ? globalThis : self, root => {
   const MAX_APPLY_ATTEMPTS = 20;
   const APPLY_RETRY_MS = 50;
+  const RESUME_REFRESH_MS = 250;
   let started = false;
+  let resumeTimer = null;
 
   function setText(node, value) {
     if (!node || node.textContent === value) return false;
@@ -56,9 +58,36 @@
     const note = documentApi.createElement("p");
     note.id = "githubIssueModeNote";
     note.className = "hint";
-    note.textContent = "The planner creates real GitHub issues with the connected write-capable plugin. AutoPrompter opens one persistent worker chat per ready issue. The combined reviewer/merger inspects each pull request, merges it when ready, or posts feedback and returns the same issue to its worker chat.";
+    note.textContent = "The planner creates real GitHub issues with the connected write-capable plugin. AutoPrompter opens a fresh temporary managed worker tab for each ready issue. The combined reviewer/merger inspects each pull request, merges it when ready, or posts feedback and returns the same issue to its worker conversation.";
     panel.insertBefore(note, panel.firstElementChild?.nextSibling || panel.firstChild);
     return true;
+  }
+
+  function projectSnapshot(documentApi) {
+    const output = documentApi.getElementById("projectInspectOutput")?.textContent || "";
+    if (!output.trim()) return null;
+    try {
+      return JSON.parse(output);
+    } catch {
+      return null;
+    }
+  }
+
+  function applyResumeControl(documentApi = root.document) {
+    if (!documentApi?.getElementById) return false;
+    const button = documentApi.getElementById("resumeProject");
+    if (!button) return false;
+    const status = String(documentApi.getElementById("projectStatusBadge")?.textContent || "").trim();
+    const bootstrapStatus = String(projectSnapshot(documentApi)?.autonomousBootstrap?.status || "").trim();
+    const recoverableBootstrap = ["failed", "cancelled"].includes(bootstrapStatus);
+    const enabled = status === "paused" || recoverableBootstrap;
+    if (button.disabled === enabled) button.disabled = !enabled;
+    setText(button, recoverableBootstrap ? "Resume stage" : "Resume");
+    const title = recoverableBootstrap
+      ? "Continue from the stored GitHub issue, task-creation, or worker stage without initializing completed roles again."
+      : "Resume this paused project from its stored stage.";
+    if (button.title !== title) button.title = title;
+    return enabled;
   }
 
   function apply(documentApi = root.document) {
@@ -73,12 +102,12 @@
     labelText(documentApi, "projectReviewerChat", "Pull-request reviewer and merger chat");
     queryText(documentApi, "#projectModePanel > summary", "GitHub Issue and Pull Request Mode");
     queryText(documentApi, "#projectNewPanel > .hint", "Create a GitHub-native project. The planner and combined pull-request reviewer/merger can be created automatically or bound to existing chats.");
-    queryText(documentApi, "#projectWorkerHint", "Worker chats are created automatically—one persistent ChatGPT conversation for each ready GitHub issue.");
+    queryText(documentApi, "#projectWorkerHint", "Workers use fresh temporary managed ChatGPT tabs—one per ready GitHub issue. A worker conversation is reused only when that pull request needs revisions.");
     queryText(documentApi, "#createProject", "Create GitHub issue project");
     queryText(documentApi, "#plannerWorkbench > strong", "GitHub issue planner");
-    queryText(documentApi, "#plannerWorkbench > .hint", "The planner uses the connected GitHub plugin to create real issues, then returns their verified issue numbers and URLs. Manual controls remain only for recovery.");
+    queryText(documentApi, "#plannerWorkbench > .hint", "The planner uses the connected GitHub plugin to create or recover real issues, then returns their verified issue numbers and URLs. Manual controls remain only for recovery.");
     queryText(documentApi, "#workerWorkbench > strong", "Issue workers and pull-request review");
-    queryText(documentApi, "#workerWorkbench > .hint", "Each ready issue receives a persistent worker chat. A worker creates or updates one pull request; the combined reviewer/merger either merges it or posts feedback and returns it to the same chat.");
+    queryText(documentApi, "#workerWorkbench > .hint", "Each ready issue receives a fresh temporary managed worker tab. A worker creates or updates one pull request; the combined reviewer/merger either merges it or posts feedback and returns it to the same worker conversation.");
     queryText(documentApi, "#projectAutomationCard > strong", "GitHub issue and pull request board");
     queryText(documentApi, "#projectAutomationBadge", "Issue → PR → review/merge");
 
@@ -95,12 +124,23 @@
       reviewInput.placeholder = "AUTOPROMPTER_PR_REVIEW_BEGIN\n{ ... merged or changes requested ... }\nAUTOPROMPTER_PR_REVIEW_END";
     }
     addModeNote(documentApi);
+    applyResumeControl(documentApi);
 
     return Boolean(
       documentApi.getElementById("projectModePanel")
       && documentApi.getElementById("projectNewPanel")
       && documentApi.getElementById("projectAutomationCard")
     );
+  }
+
+  function startResumeControl(documentApi = root.document, timerApi = root) {
+    if (resumeTimer || !documentApi || typeof timerApi.setInterval !== "function") return false;
+    resumeTimer = timerApi.setInterval(() => applyResumeControl(documentApi), RESUME_REFRESH_MS);
+    root.addEventListener?.("unload", () => {
+      if (resumeTimer && typeof timerApi.clearInterval === "function") timerApi.clearInterval(resumeTimer);
+      resumeTimer = null;
+    }, { once: true });
+    return true;
   }
 
   function start(documentApi = root.document, timerApi = root) {
@@ -112,6 +152,7 @@
       attempts += 1;
       const ready = apply(documentApi);
       if (!ready && attempts < MAX_APPLY_ATTEMPTS) timerApi.setTimeout(run, APPLY_RETRY_MS);
+      if (ready) startResumeControl(documentApi, timerApi);
     };
 
     if (documentApi.readyState === "loading") {
@@ -127,11 +168,15 @@
   return {
     MAX_APPLY_ATTEMPTS,
     APPLY_RETRY_MS,
+    RESUME_REFRESH_MS,
     setText,
     setHidden,
     labelText,
     addModeNote,
+    projectSnapshot,
+    applyResumeControl,
     apply,
+    startResumeControl,
     start
   };
 });

@@ -141,10 +141,12 @@ test("extension manifest loads the GitHub issue and pull request runtime", () =>
   assert.match(entry, /project-github-bootstrap\.js/);
   assert.match(entry, /project-github-workflow\.js/);
   assert.match(entry, /project-github-persistence\.js/);
+  assert.match(entry, /project-github-envelope-recovery\.js/);
+  assert.match(entry, /project-github-resume\.js/);
   assert.match(entry, /project-github-dispatch\.js/);
   assert.match(entry, /autocontinue-unlimited-retries\.js/);
   assert.match(entry, /AutoPrompterProjectPlanRecovery\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectTaskBoardController\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectRoleKick\.start\(\)/);
-  assert.equal(manifest.version, "4.0.1");
+  assert.equal(manifest.version, "4.0.2");
 });
