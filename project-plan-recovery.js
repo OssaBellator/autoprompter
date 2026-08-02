@@ -5,7 +5,7 @@
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.AutoPrompterProjectPlanRecovery = api;
 })(typeof globalThis !== "undefined" ? globalThis : self, root => {
-  const MESSAGE_SCOPE = "AUTOPROMPTER_RUNTIME";
+  const MESSAGE_SCOPE = "AUTOPROMPTER_PROJECT_PLAN_RECOVERY";
   const BOOTSTRAP_KEY = "autoprompterProjectBootstraps";
   const GET_RECOVERY = "GET_PROJECT_PLANNER_RECOVERY";
   const RECOVERABLE_STAGES = new Set(["planner_plan", "planner_repair"]);
