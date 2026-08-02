@@ -19,6 +19,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Repair generator quoting
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/apply-composer-project-tabs-fix.js")
+          source = path.read_text()
+          before = 'if (attempt < 2) await status(`Composer refreshed; restoring prompt (${attempt + 2}/3)`);'
+          after = 'if (attempt < 2) await status("Composer refreshed; restoring prompt " + (attempt + 2) + "/3");'
+          if source.count(before) != 1:
+              raise SystemExit("Expected exactly one generator quoting anchor")
+          path.write_text(source.replace(before, after))
+          PY
       - name: Apply guarded source transformations
         run: node scripts/apply-composer-project-tabs-fix.js
       - name: Validate generated source
