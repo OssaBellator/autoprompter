@@ -3,7 +3,8 @@
 
   if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
 
-  const MESSAGE_SCOPE = "AUTOPROMPTER_RUNTIME";
+  const RUNTIME_SCOPE = "AUTOPROMPTER_RUNTIME";
+  const RECOVERY_SCOPE = "AUTOPROMPTER_PROJECT_PLAN_RECOVERY";
   const GET_RECOVERY = "GET_PROJECT_PLANNER_RECOVERY";
   const POLL_MS = 2000;
   const STABLE_MS = 1500;
@@ -78,9 +79,9 @@
     return null;
   }
 
-  async function runtimeMessage(type, extra = {}) {
+  async function send(scope, type, extra = {}) {
     try {
-      return await chrome.runtime.sendMessage({ scope: MESSAGE_SCOPE, type, ...extra });
+      return await chrome.runtime.sendMessage({ scope, type, ...extra });
     } catch {
       return null;
     }
@@ -90,7 +91,7 @@
     if (checking) return;
     checking = true;
     try {
-      const state = await runtimeMessage(GET_RECOVERY);
+      const state = await send(RECOVERY_SCOPE, GET_RECOVERY);
       const recovery = state?.ok === true ? state.recovery : null;
       if (!recovery) {
         observed = null;
@@ -110,7 +111,7 @@
       if (now - Number(submittedAt.get(key) || 0) < RETRY_MS) return;
       submittedAt.set(key, now);
 
-      await runtimeMessage("PROJECT_BOOTSTRAP_RESULT", {
+      await send(RUNTIME_SCOPE, "PROJECT_BOOTSTRAP_RESULT", {
         projectId: recovery.projectId,
         role: "planner",
         stage: recovery.stage,
