@@ -4,7 +4,7 @@
   const MESSAGE_SCOPE = "AUTOPROMPTER_RUNTIME";
   const PROJECT_RUNTIME_PROBE = "GET_PROJECT_BOOTSTRAP";
   const PROJECT_RUNTIME_PROBE_ID = "__autoprompter_runtime_probe__";
-  const RUNTIME_COMPATIBILITY_BUILD = "project-bootstrap-runtime-v2";
+  const RUNTIME_COMPATIBILITY_BUILD = "project-bootstrap-runtime-v3";
   const RELOAD_MARKER_KEY = "autoprompterRuntimeCompatibilityReload";
   const RELOAD_COOLDOWN_MS = 60_000;
   const RUNTIME_MISMATCH_MESSAGE = [
@@ -138,6 +138,16 @@
     return gate;
   }
 
+  function loadProjectUi(chromeApi, documentApi = globalThis.document) {
+    if (!documentApi?.createElement || documentApi.getElementById("autoprompterProjectUiLoader")) return false;
+    const script = documentApi.createElement("script");
+    script.id = "autoprompterProjectUiLoader";
+    script.src = chromeApi.runtime.getURL("project-ui.js");
+    script.defer = true;
+    (documentApi.head || documentApi.documentElement).append(script);
+    return true;
+  }
+
   const exported = {
     MESSAGE_SCOPE,
     PROJECT_RUNTIME_PROBE,
@@ -152,12 +162,14 @@
     runtimeMismatchResponse,
     attemptRuntimeReload,
     probeProjectRuntime,
-    installRuntimeCompatibilityGate
+    installRuntimeCompatibilityGate,
+    loadProjectUi
   };
 
   if (typeof module === "object" && module.exports) {
     module.exports = exported;
   } else if (globalThis.chrome?.runtime?.sendMessage) {
     installRuntimeCompatibilityGate(globalThis.chrome);
+    loadProjectUi(globalThis.chrome);
   }
 })();
