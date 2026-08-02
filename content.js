@@ -118,6 +118,14 @@
     return String(value || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
   }
 
+  function normalizeComposerText(value) {
+    return normalizeText(
+      String(value || "")
+        .normalize("NFC")
+        .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+    );
+  }
+
   function hashText(value) {
     let hash = 2166136261;
     const text = String(value || "");
@@ -418,8 +426,12 @@
 
   function composerText(element = composer()) {
     if (!element) return "";
-    if ("value" in element) return normalizeText(element.value);
-    return normalizeText(element.innerText || element.textContent || "");
+    if ("value" in element) return normalizeComposerText(element.value);
+    return normalizeComposerText(element.innerText || element.textContent || "");
+  }
+
+  function promptMatchesComposer(element, prompt) {
+    return Boolean(element && composerText(element) === normalizeComposerText(prompt));
   }
 
   function enabledSendButton() {
@@ -790,15 +802,71 @@
     }
   }
 
-  function clearOwnedComposer(element, owner) {
-    if (!element?.isConnected || element.getAttribute(OWNERSHIP_ATTR) !== owner) return;
-    if ("value" in element) element.value = ""; else element.textContent = "";
-    element.removeAttribute(OWNERSHIP_ATTR);
-    element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+  async function populateOwnedComposer({ target, prompt, owner, signal, status, settings, baseline }) {
+    const expected = normalizeComposerText(prompt);
+    let current = target;
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (!current?.isConnected) current = composer();
+      if (!current) current = await waitForEmptyComposer(signal, status, settings, baseline);
+
+      const existing = composerText(current);
+      if (existing && existing !== expected) {
+        throw new Error("The composer contains different text; the AutoPrompter prompt was not sent.");
+      }
+
+      current.setAttribute(OWNERSHIP_ATTR, owner);
+      if (existing !== expected) dispatchInput(current, prompt);
+      await sleep(150, signal);
+
+      const live = composer();
+      if (promptMatchesComposer(live, prompt)) {
+        live.setAttribute(OWNERSHIP_ATTR, owner);
+        return live;
+      }
+
+      const liveText = composerText(live);
+      if (liveText) {
+        throw new Error("The prompt was edited before submission; it was not sent.");
+      }
+
+      current = live;
+      if (attempt < 2) await status("Composer refreshed; restoring prompt " + (attempt + 2) + "/3");
+    }
+
+    throw new Error("ChatGPT repeatedly cleared the composer before submission.");
+  }
+
+  function validateOwnedComposer(target, owner, prompt) {
+    const live = composer();
+    if (!live) throw new Error("The composer was replaced before submission.");
+    if (!promptMatchesComposer(live, prompt)) {
+      throw new Error("The prompt was edited before submission; it was not sent.");
+    }
+    if (live.getAttribute(OWNERSHIP_ATTR) !== owner) live.setAttribute(OWNERSHIP_ATTR, owner);
+    return live;
+  }
+
+  function releaseOwnedComposer(element, owner) {
+    const live = element?.isConnected ? element : composer();
+    if (live?.getAttribute(OWNERSHIP_ATTR) === owner) live.removeAttribute(OWNERSHIP_ATTR);
+  }
+
+  function clearOwnedComposer(element, owner, prompt = "") {
+    const live = element?.isConnected ? element : composer();
+    if (!live || live.getAttribute(OWNERSHIP_ATTR) !== owner) return;
+    if (prompt && !promptMatchesComposer(live, prompt)) {
+      live.removeAttribute(OWNERSHIP_ATTR);
+      return;
+    }
+    if ("value" in live) live.value = ""; else live.textContent = "";
+    live.removeAttribute(OWNERSHIP_ATTR);
+    live.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
   }
 
   function submissionObserved(target, beforeUsers) {
-    return userCount() > beforeUsers || isGenerating() || composerText(target) === "";
+    const live = target?.isConnected ? target : composer();
+    return userCount() > beforeUsers || isGenerating() || !live || composerText(live) === "";
   }
 
   function submitWithFallback(target) {
@@ -889,16 +957,15 @@
     target = await waitForEmptyComposer(signal, status, settings, baseline);
 
     const owner = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
-    target.setAttribute(OWNERSHIP_ATTR, owner);
-    dispatchInput(target, prompt);
 
     try {
       await status("Preparing prompt");
+      target = await populateOwnedComposer({
+        target, prompt, owner, signal, status, settings, baseline
+      });
       const validateOwnership = () => {
-        if (!target.isConnected) throw new Error("The composer was replaced before submission.");
-        if (target.getAttribute(OWNERSHIP_ATTR) !== owner || composerText(target) !== normalizeText(prompt)) {
-          throw new Error("The prompt was edited before submission; it was not sent.");
-        }
+        target = validateOwnedComposer(target, owner, prompt);
+        return target;
       };
 
       const beforeUsers = userCount();
@@ -927,9 +994,9 @@
         signal,
         checkInterruption: () => detectInterruption(settings, baseline)
       });
-      target.removeAttribute(OWNERSHIP_ATTR);
+      releaseOwnedComposer(target, owner);
     } catch (error) {
-      clearOwnedComposer(target, owner);
+      clearOwnedComposer(target, owner, prompt);
       throw error;
     }
 
@@ -1489,6 +1556,8 @@
     module.exports = {
       hashText,
       normalizeText,
+      normalizeComposerText,
+      promptMatchesComposer,
       conversationInfo,
       snapshotChanged,
       estimateTokensFromText,

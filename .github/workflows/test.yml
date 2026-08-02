@@ -5,70 +5,9 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-project-composer-fix:
-    if: (github.ref == 'refs/heads/fix/composer-rerender-project-tabs' || github.head_ref == 'fix/composer-rerender-project-tabs') && github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: fix/composer-rerender-project-tabs
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Repair generator quoting
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path("scripts/apply-composer-project-tabs-fix.js")
-          source = path.read_text()
-          before = 'if (attempt < 2) await status(`Composer refreshed; restoring prompt (${attempt + 2}/3)`);'
-          after = 'if (attempt < 2) await status("Composer refreshed; restoring prompt " + (attempt + 2) + "/3");'
-          if source.count(before) != 1:
-              raise SystemExit("Expected exactly one generator quoting anchor")
-          path.write_text(source.replace(before, after))
-          PY
-      - name: Apply guarded source transformations
-        run: node scripts/apply-composer-project-tabs-fix.js
-      - name: Refresh Project Mode source assertion
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path("tests/popup-source.test.js")
-          source = path.read_text()
-          before = '  assert.match(popupHtml, /Planner, reviewer, and integrator prompts remain manual/);'
-          after = '\n'.join([
-              '  assert.match(popupHtml, /id="projectExistingTab"/);',
-              '  assert.match(popupHtml, /id="projectNewTab"/);',
-              '  assert.match(popupHtml, /id="projectExistingPanel"/);',
-              '  assert.match(popupHtml, /id="projectNewPanel"/);'
-          ])
-          if source.count(before) != 1:
-              raise SystemExit("Expected exactly one obsolete Project Mode assertion")
-          path.write_text(source.replace(before, after))
-          PY
-      - name: Validate generated source
-        run: |
-          npm test
-          npm run check
-      - name: Remove patch machinery and restore CI workflow
-        run: |
-          rm scripts/apply-composer-project-tabs-fix.js
-          rm -f .github/workflows/apply-composer-project-tabs-fix.yml
-          rm -f PATCH_TRIGGER.md PATCH_TRIGGER_2.md
-          git checkout origin/main -- .github/workflows/test.yml
-      - name: Commit generated fix
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --check
-          git commit -m "Fix Project Mode composer submission and split project views"
-          git push origin HEAD:fix/composer-rerender-project-tabs
-
   test:
     runs-on: ubuntu-latest
     steps:

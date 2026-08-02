@@ -176,3 +176,33 @@ select { width: 100%; margin-top: 6px; padding: 8px; border: 1px solid color-mix
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+
+.project-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: 8px 0 10px;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, CanvasText 4%, transparent);
+}
+.project-tab {
+  border: 0;
+  padding: 8px 10px;
+  background: transparent;
+  color: GrayText;
+}
+.project-tab.active {
+  background: Canvas;
+  color: CanvasText;
+  box-shadow: 0 1px 3px color-mix(in srgb, CanvasText 16%, transparent);
+}
+.project-tab-panel { min-width: 0; }
+.project-tab-panel > .hint:first-child { margin-top: 2px; }
+.project-message {
+  min-height: 15px;
+  padding-top: 2px;
+  overflow-wrap: anywhere;
+}
