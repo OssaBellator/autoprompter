@@ -14,6 +14,8 @@
   const SCHEMA_VERSION = "1.0";
   const MAX_PROJECTS = 100;
   const MAX_NOTES = 12000;
+  const MAX_PROMPT = 12000;
+  const MAX_CONTEXT_SECTION = 3500;
 
   function clone(value) {
     return value == null ? value : structuredClone(value);
@@ -149,17 +151,24 @@
     const sections = [];
     if (project?.name) sections.push(`Project folder: ${project.name}`);
     if (project?.repository) sections.push(`GitHub repository: ${project.repository}`);
-    if (project?.notes) sections.push(`Project notes:\n${text(project.notes, MAX_NOTES)}`);
-    if (chatNotes) sections.push(`Chat notes:\n${text(chatNotes, MAX_NOTES)}`);
+    if (project?.notes) sections.push(`Project notes:\n${text(project.notes, MAX_CONTEXT_SECTION)}`);
+    if (chatNotes) sections.push(`Chat notes:\n${text(chatNotes, MAX_CONTEXT_SECTION)}`);
     if (!sections.length) return "";
     return ["AutoPrompter context for this chat:", ...sections].join("\n\n");
   }
 
   function appendContext(prompt, project, chatNotes) {
-    const base = text(prompt, 12000);
+    const base = text(prompt, MAX_PROMPT);
     const context = contextBlock(project, chatNotes);
     if (!context) return base;
-    return `${base}\n\n---\n${context}`.slice(0, 24000);
+    const separator = "\n\n---\n";
+    if (base.length + separator.length + context.length <= MAX_PROMPT) {
+      return `${base}${separator}${context}`;
+    }
+    const contextBudget = Math.min(context.length, MAX_CONTEXT_SECTION * 2 + 500);
+    const boundedContext = context.slice(0, contextBudget);
+    const baseBudget = Math.max(0, MAX_PROMPT - separator.length - boundedContext.length);
+    return `${base.slice(0, baseBudget)}${separator}${boundedContext}`;
   }
 
   function enrichSchedulerMessage(message, values = {}) {
@@ -190,6 +199,8 @@
     SELECTION_KEY,
     SCHEMA_VERSION,
     MAX_NOTES,
+    MAX_PROMPT,
+    MAX_CONTEXT_SECTION,
     normalizeRepository,
     uniqueChatIds,
     normalizeProject,
