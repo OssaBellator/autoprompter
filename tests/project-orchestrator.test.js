@@ -97,7 +97,7 @@ test("role jobs disable continuity and preserve bounded interruption settings", 
   assert.equal(settings.contextThresholdPercent, 98);
 });
 
-test("extension adapts role and repository action jobs into the existing guarded content submitter", () => {
+test("extension adapts fresh task, reviewer, and integrator jobs into guarded content runners", () => {
   const root = path.join(__dirname, "..");
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
   const entry = fs.readFileSync(path.join(root, "background-entry.js"), "utf8");
@@ -107,17 +107,17 @@ test("extension adapts role and repository action jobs into the existing guarded
 
   assert.deepEqual(manifest.content_scripts[0].js.slice(-2), ["project-role-runner.js", "content.js"]);
   assert.match(entry, /AutoPrompterProjectOrchestrator\.start\(\)/);
-  assert.match(entry, /AutoPrompterProjectFullAuto\.start\(\)/);
+  assert.match(entry, /AutoPrompterProjectTaskBoardController\.start\(\)/);
   assert.match(entry, /AutoPrompterProjectAdmin\.start\(\)/);
+  assert.doesNotMatch(entry, /AutoPrompterProjectFullAuto\.start\(\)/);
   assert.match(roleRunner, /RUN_PROJECT_ROLE_JOB/);
-  assert.match(roleRunner, /RUN_PROJECT_ACTION_JOB/);
   assert.match(roleRunner, /type: "RUN_PROJECT_BOOTSTRAP_JOB"/);
   assert.match(roleRunner, /PROJECT_ROLE_RESULT/);
-  assert.match(roleRunner, /PROJECT_ACTION_RESULT/);
   assert.match(roleRunner, /activeJobs\.has\(message\.jobId\)/);
   assert.match(content, /message\.type === "RUN_PROJECT_BOOTSTRAP_JOB"/);
-  assert.doesNotMatch(content, /PROJECT_ACTION_RESULT/);
+  assert.match(content, /RUN_PROJECT_SUCCESSOR_TASK/);
   assert.match(projectUi, /Advanced recovery and diagnostics/);
   assert.match(projectUi, /deleteExistingProject/);
-  assert.equal(manifest.version, "3.3.1");
+  assert.match(projectUi, /Branch task board/);
+  assert.equal(manifest.version, "3.4.0");
 });

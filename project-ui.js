@@ -17,11 +17,13 @@
       ".project-automation-card{display:grid;gap:8px;margin-top:12px;padding:12px;border:1px solid var(--border,#d0d7de);border-radius:10px}",
       ".project-automation-card>strong{grid-column:1}",
       ".project-automation-card>.project-status-badge{grid-column:2;justify-self:end}",
-      ".project-automation-card>small,.project-automation-actions,.project-automation-card>button{grid-column:1/-1}",
-      ".project-automation-actions{display:grid;gap:6px}",
-      ".project-automation-row{display:grid;gap:2px;padding:7px 0;border-top:1px solid var(--border,#d0d7de)}",
-      ".project-automation-row:first-child{border-top:0}",
-      ".project-automation-row small{overflow-wrap:anywhere}",
+      ".project-automation-card>small,.project-task-board,.project-automation-card>button{grid-column:1/-1}",
+      ".project-task-board{display:grid;gap:6px}",
+      ".project-task-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 8px;padding:8px 0;border-top:1px solid var(--border,#d0d7de)}",
+      ".project-task-row:first-child{border-top:0}",
+      ".project-task-row strong,.project-task-row small{overflow-wrap:anywhere}",
+      ".project-task-row small{grid-column:1/-1}",
+      ".project-task-state{font-size:11px;font-weight:600;text-transform:uppercase}",
       ".project-advanced-panel{margin-top:12px}",
       ".project-advanced-panel>summary{cursor:pointer;font-weight:600}",
       ".project-advanced-panel:not([open]){padding-bottom:2px}"
@@ -53,17 +55,19 @@
     installDeleteButton(existingPanel);
 
     const hint = existingPanel.querySelector(":scope > .hint");
-    if (hint) hint.textContent = "Select a saved project. Planning, worker dispatch, independent review, integration approval, workflow setup, merge, and release actions advance automatically.";
+    if (hint) hint.textContent = "Select a saved project. The planner creates a dependency-aware task list; every ready task receives its own branch and fresh ChatGPT worker conversation.";
+    const workerHint = element("projectWorkerHint");
+    if (workerHint) workerHint.textContent = "Worker chats do not need to be selected. AutoPrompter opens one fresh ChatGPT conversation for each ready task branch. Planner, reviewer, and integrator chats remain separate roles.";
 
     const automation = document.createElement("section");
     automation.id = "projectAutomationCard";
     automation.className = "project-automation-card";
     automation.innerHTML = [
-      "<strong>Full automation</strong>",
-      '<span id="projectAutomationBadge" class="project-status-badge">Enabled</span>',
+      "<strong>Branch task board</strong>",
+      '<span id="projectAutomationBadge" class="project-status-badge">Fresh chat per task</span>',
       '<small id="projectAutomationSummary">Waiting for a project selection.</small>',
-      '<div id="projectAutomationActions" class="project-automation-actions"></div>',
-      '<button id="retryProjectAutomation" class="compact" type="button" hidden>Retry blocked automation</button>'
+      '<div id="projectTaskBoard" class="project-task-board"></div>',
+      '<button id="retryProjectAutomation" class="compact" type="button" hidden>Retry stalled tasks</button>'
     ].join("");
 
     const advanced = document.createElement("details");
@@ -73,7 +77,7 @@
     summary.textContent = "Advanced recovery and diagnostics";
     const note = document.createElement("p");
     note.className = "hint";
-    note.textContent = "These controls are retained for inspection and recovery. Normal Project Mode operation does not require manual planner envelopes, model verification, result pasting, reviewer prompts, integration approval, or approval-queue input.";
+    note.textContent = "Normal operation needs only the project goal and repository. These controls are retained for inspection, recovery, and manually validating a worker, reviewer, or integrator envelope.";
     advanced.append(summary, note, planner, workers);
     statusCard.append(automation, advanced);
 
@@ -86,24 +90,24 @@
 
     element("projectSelect")?.addEventListener("change", () => {
       updateDeleteButton();
-      refreshAutomation();
+      refreshTaskBoard();
     });
-    element("inspectProject")?.addEventListener("click", () => setTimeout(refreshAutomation, 150));
+    element("inspectProject")?.addEventListener("click", () => setTimeout(refreshTaskBoard, 150));
     element("retryProjectAutomation")?.addEventListener("click", retryAutomation);
     element("deleteExistingProject")?.addEventListener("click", deleteSelectedProject);
     chrome.storage?.onChanged?.addListener((changes, area) => {
-      if (area === "local" && (changes.autoprompterProjectActionJobs || changes.autoprompterProjects || changes.autoprompterProjectRoleJobs)) {
+      if (area === "local" && (changes.autoprompterProjects || changes.autoprompterProjectRoleJobs)) {
         updateDeleteButton();
-        refreshAutomation();
+        refreshTaskBoard();
       }
     });
     updateDeleteButton();
-    refreshAutomation();
+    refreshTaskBoard();
   }
 
   async function runtime(type, extra = {}) {
     const response = await chrome.runtime.sendMessage({ scope: MESSAGE_SCOPE, type, ...extra });
-    if (!response || response.ok === false) throw new Error(response?.error || "Project automation state is unavailable.");
+    if (!response || response.ok === false) throw new Error(response?.error || "Project task-board state is unavailable.");
     return response;
   }
 
@@ -122,35 +126,43 @@
     if (button) button.disabled = !selectedProjectId();
   }
 
-  function actionLabel(action) {
-    return {
-      modify_workflow: "Repository bootstrap bundle",
-      change_permissions: "Minimum repository permissions",
-      merge_to_default_branch: "Default-branch merge",
-      publish_release: "Release publication",
-      delete_branch: "Branch cleanup",
-      external_side_effect: "External action"
-    }[action] || action;
-  }
+  function renderTask(boardElement, task) {
+    const row = document.createElement("div");
+    row.className = "project-task-row";
+    const title = document.createElement("strong");
+    title.textContent = task.title || task.id;
+    const state = document.createElement("span");
+    state.className = "project-task-state";
+    state.textContent = task.status;
+    row.append(title, state);
 
-  function latestJobs(actions, projectId) {
-    const latest = new Map();
-    for (const job of Object.values(actions || {}).filter(item => item?.projectId === projectId)) {
-      const existing = latest.get(job.action);
-      const jobTime = String(job.updatedAt || job.createdAt || "");
-      const existingTime = String(existing?.updatedAt || existing?.createdAt || "");
-      if (!existing || jobTime.localeCompare(existingTime) >= 0) latest.set(job.action, job);
+    const branch = document.createElement("small");
+    branch.textContent = task.branch ? `Branch: ${task.branch}` : "Branch will be assigned when dependencies are accepted.";
+    row.append(branch);
+    if (task.dependencies?.length) {
+      const dependencies = document.createElement("small");
+      dependencies.textContent = `Depends on: ${task.dependencies.join(", ")}`;
+      row.append(dependencies);
     }
-    return [...latest.values()].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+    if (task.commit) {
+      const commit = document.createElement("small");
+      commit.textContent = `Commit: ${task.commit}`;
+      row.append(commit);
+    } else if (task.lastStatus) {
+      const activity = document.createElement("small");
+      activity.textContent = `Activity: ${task.lastStatus}`;
+      row.append(activity);
+    }
+    boardElement.append(row);
   }
 
-  async function refreshAutomation() {
+  async function refreshTaskBoard() {
     const summary = element("projectAutomationSummary");
-    const actions = element("projectAutomationActions");
+    const boardElement = element("projectTaskBoard");
     const retry = element("retryProjectAutomation");
-    if (!summary || !actions || !retry) return;
+    if (!summary || !boardElement || !retry) return;
     const projectId = selectedProjectId();
-    actions.textContent = "";
+    boardElement.textContent = "";
     retry.hidden = true;
     if (!projectId) {
       summary.textContent = "Waiting for a project selection.";
@@ -158,30 +170,24 @@
     }
     try {
       const response = await runtime("GET_PROJECT_AUTOMATION");
-      const jobs = latestJobs(response.actions, projectId);
       const project = response.projects?.[projectId];
-      summary.textContent = project
-        ? `Project ${project.status}. AutoPrompter advances every eligible stage without manual form input.`
-        : "Project automation state is loading.";
-      if (!jobs.length) {
-        const empty = document.createElement("small");
-        empty.textContent = "Repository actions will appear here when their prerequisites are ready.";
-        actions.append(empty);
+      const board = response.taskBoards?.[projectId];
+      if (!project || !board) {
+        summary.textContent = "Project task-board state is loading.";
         return;
       }
-      let retryable = false;
-      for (const job of jobs) {
-        const row = document.createElement("div");
-        row.className = "project-automation-row";
-        const name = document.createElement("span");
-        name.textContent = actionLabel(job.action);
-        const state = document.createElement("small");
-        state.textContent = `${job.status}${job.summary ? ` · ${job.summary}` : job.error ? ` · ${job.error}` : ""}`;
-        row.append(name, state);
-        actions.append(row);
-        if (["blocked", "failed"].includes(job.status)) retryable = true;
+      const total = board.tasks.length;
+      const accepted = board.tasks.filter(task => task.status === "accepted").length;
+      const active = board.tasks.filter(task => ["leased", "running", "review"].includes(task.status)).length;
+      summary.textContent = `${project.status} · ${accepted}/${total} accepted · ${active} active. Independent tasks run concurrently on separate branches and fresh chats.`;
+      if (!total) {
+        const empty = document.createElement("small");
+        empty.textContent = "The planner task list will appear here after bootstrap.";
+        boardElement.append(empty);
+        return;
       }
-      retry.hidden = !retryable;
+      for (const task of board.tasks) renderTask(boardElement, task);
+      retry.hidden = !board.tasks.some(task => ["failed", "cancelled"].includes(task.status) || /expired|error/i.test(task.lastStatus || ""));
     } catch (error) {
       summary.textContent = error.message;
     }
@@ -210,7 +216,7 @@
     const select = element("projectSelect");
     const title = select?.selectedOptions?.[0]?.textContent?.replace(/\s+·\s+[^·]+$/, "") || projectId;
     const confirmed = globalThis.confirm(
-      `Delete “${title}” from AutoPrompter?\n\nThis removes its local plan, tasks, reviews, integration state, approvals, and managed job tabs. It does not delete GitHub content or ChatGPT conversations.`
+      `Delete “${title}” from AutoPrompter?\n\nThis removes its local task board, plans, reviews, integration state, and managed tabs. It does not delete GitHub content or ChatGPT conversations.`
     );
     if (!confirmed) return;
 
@@ -227,10 +233,7 @@
       } else {
         const card = element("projectStatusCard");
         if (card) card.hidden = true;
-        const summary = element("projectAutomationSummary");
-        if (summary) summary.textContent = "Waiting for a project selection.";
-        const actions = element("projectAutomationActions");
-        if (actions) actions.textContent = "";
+        summaryReset();
       }
     } catch (error) {
       const message = element("projectMessage");
@@ -240,6 +243,13 @@
     }
   }
 
+  function summaryReset() {
+    const summary = element("projectAutomationSummary");
+    if (summary) summary.textContent = "Waiting for a project selection.";
+    const board = element("projectTaskBoard");
+    if (board) board.textContent = "";
+  }
+
   async function retryAutomation() {
     const projectId = selectedProjectId();
     if (!projectId) return;
@@ -247,7 +257,7 @@
     button.disabled = true;
     try {
       await runtime("RETRY_PROJECT_AUTOMATION", { projectId });
-      await refreshAutomation();
+      await refreshTaskBoard();
     } catch (error) {
       element("projectAutomationSummary").textContent = error.message;
     } finally {
