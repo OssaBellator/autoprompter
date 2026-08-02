@@ -2,6 +2,8 @@
 
 importScripts(
   "background.js",
+  "autocontinue-unlimited-retries.js",
+  "project-github-bootstrap.js",
   "background-project-api.js",
   "planner-compiler.js",
   "planner-fallback.js",
@@ -11,7 +13,9 @@ importScripts(
   "project-auto-store.js",
   "project-admin.js",
   "project-task-board.js",
+  "project-github-workflow.js",
   "project-fresh-dispatch.js",
+  "project-github-dispatch.js",
   "project-auto-bootstrap.js",
   "project-plan-recovery.js"
 );
@@ -23,7 +27,9 @@ importScripts(
 );
 
 if (
-  !globalThis.AutoPrompterBackgroundProjectApi
+  !globalThis.AutoPrompterUnlimitedConnectionRetries
+  || !globalThis.AutoPrompterGitHubIssueBootstrap
+  || !globalThis.AutoPrompterBackgroundProjectApi
   || !globalThis.AutoPrompterPlannerCompiler
   || !globalThis.AutoPrompterPlannerFallback
   || !globalThis.AutoPrompterPlannerNoRepair
@@ -32,7 +38,9 @@ if (
   || !globalThis.AutoPrompterProjectAutoStore
   || !globalThis.AutoPrompterProjectAdmin
   || !globalThis.AutoPrompterProjectTaskBoard
+  || !globalThis.AutoPrompterGitHubIssueWorkflow
   || !globalThis.AutoPrompterProjectFreshDispatch
+  || !globalThis.AutoPrompterGitHubIssueDispatch
   || !globalThis.AutoPrompterProjectAutoBootstrap
   || !globalThis.AutoPrompterProjectPlanRecovery
   || !globalThis.AutoPrompterProjectStore
@@ -41,7 +49,7 @@ if (
   || !globalThis.AutoPrompterProjectTaskBoardController
   || !globalThis.AutoPrompterBootstrapUpgrade
 ) {
-  throw new Error("AutoPrompter task-board Project Mode runtime failed to initialize.");
+  throw new Error("AutoPrompter GitHub Issue Mode runtime failed to initialize.");
 }
 
 globalThis.AutoPrompterPlannerCompiler.install(globalThis.AutoPrompterProjectStore);
@@ -51,6 +59,8 @@ globalThis.AutoPrompterPlannerParallelPolicy.install(globalThis.AutoPrompterProj
 globalThis.AutoPrompterProjectFreshCapacity.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterProjectAutoStore.install(globalThis.AutoPrompterProjectStore);
 globalThis.AutoPrompterProjectTaskBoard.install(globalThis.AutoPrompterProjectStore);
+globalThis.AutoPrompterGitHubIssueWorkflow.install(globalThis.AutoPrompterProjectStore);
+globalThis.AutoPrompterGitHubIssueDispatch.install();
 globalThis.AutoPrompterProjectAdmin.start();
 globalThis.AutoPrompterProjectPlanRecovery.start();
 globalThis.AutoPrompterProjectOrchestrator.start();
