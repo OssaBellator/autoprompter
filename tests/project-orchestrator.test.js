@@ -127,5 +127,6 @@ test("extension adapts issue capture, temporary workers, stage resume, and combi
   assert.match(githubUi, /GitHub Issue and Pull Request Mode/);
   assert.match(githubUi, /Pull-request reviewer and merger chat/);
   assert.match(githubUi, /Resume stage/);
-  assert.equal(manifest.version, "4.0.2");
+  assert.match(githubUi, /AUTOPROMPTER_GITHUB_RESUME/);
+  assert.equal(manifest.version, "4.0.3");
 });

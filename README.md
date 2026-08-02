@@ -1,10 +1,11 @@
 # AutoPrompter for ChatGPT
 
-Current release: **4.0.2**
+Current release: **4.0.3**
 
+- Fixes the flashing **Resume stage** button by giving the recoverable GitHub-stage control stable ownership instead of fighting the popup renderer.
+- Recoverable-stage clicks now use a dedicated background command, while normal paused-project Resume behavior remains unchanged.
 - Captures only complete planner issue manifests and uses the newest complete envelope when ChatGPT repeats one.
 - Reuses already initialized planner and reviewer/merger chats instead of assigning their roles again.
-- Failed GitHub projects expose **Resume stage**, which continues at issue recovery, task creation, or worker dispatch rather than restarting the project.
 - Fresh issue work runs in temporary managed worker tabs. The same worker conversation is reopened only when its pull request needs revisions.
 
 AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension that coordinates work through ChatGPT Web. It does not call an inference API and it does not store a GitHub token.
@@ -34,6 +35,8 @@ A failed bootstrap is not restarted by the delayed creation watchdog. Use **Resu
 - When GitHub issues exist but no valid local manifest was stored, AutoPrompter reopens the existing planner conversation and asks it to inventory the exact existing issues without duplicating them.
 - The initialized reviewer/merger conversation is reused and does not receive another role-assignment prompt.
 - When task records already exist, the task board resumes preparation and dispatch of ready issues.
+
+The Resume stage control uses a dedicated background command and remains enabled while a failed or cancelled bootstrap is recoverable. It no longer alternates between enabled and disabled as the popup refreshes.
 
 ### Required GitHub capability
 
@@ -104,7 +107,7 @@ npm test
 npm run check
 ```
 
-The tests cover planner-created and recovered issue manifests, role reuse, stage-aware resume, temporary worker dispatch, pull-request revisions, review-and-merge decisions, dependency unlocking, popup startup safety, normal AutoContinue interruption recovery, and syntax validation for every runtime module.
+The tests cover planner-created and recovered issue manifests, role reuse, stable stage-aware resume, temporary worker dispatch, pull-request revisions, review-and-merge decisions, dependency unlocking, popup startup safety, normal AutoContinue interruption recovery, and syntax validation for every runtime module.
 
 ## Known limitations
 

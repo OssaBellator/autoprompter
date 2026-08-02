@@ -10,7 +10,10 @@
 })(typeof globalThis !== "undefined" ? globalThis : self, (root, ProjectStore, BackgroundApi) => {
   const MODE = "github_issues_and_pull_requests";
   const BOOTSTRAP_KEY = "autoprompterProjectBootstraps";
+  const RESUME_SCOPE = "AUTOPROMPTER_GITHUB_RESUME";
+  const RESUME_TYPE = "RESUME_PROJECT_STAGE";
   const PATCH_FLAG = Symbol.for("autoprompter.githubIssueResume.installed");
+  let baseTransitionProjectState = null;
 
   function isIssueProject(project) {
     return Boolean(project && (project.githubWorkflowMode === MODE || project.taskExecutionMode === MODE));
@@ -77,6 +80,69 @@
     };
   }
 
+  async function transitionGitHubProjectState(projectId, action = "resume") {
+    if (action !== "resume") {
+      if (typeof baseTransitionProjectState !== "function") throw new Error("Project transitions are unavailable.");
+      return baseTransitionProjectState(projectId, action);
+    }
+
+    let store = await root.loadProjectStore();
+    const project = store.projects?.[projectId];
+    if (!project) throw new Error("Project not found.");
+    if (!isIssueProject(project)) {
+      if (typeof baseTransitionProjectState !== "function") throw new Error("Project transitions are unavailable.");
+      return baseTransitionProjectState(projectId, action);
+    }
+
+    const bootstraps = await loadBootstraps();
+    const bootstrap = bootstraps[projectId];
+    let transitionResult;
+
+    if (project.status === "paused") {
+      if (typeof baseTransitionProjectState !== "function") throw new Error("Project transitions are unavailable.");
+      transitionResult = await baseTransitionProjectState(projectId, action);
+    } else if (bootstrapCanResume(bootstrap) || project.status === "failed") {
+      const status = resumedStatus(store, projectId);
+      const at = appendResumeEvent(store, projectId, status);
+      project.status = status;
+      project.updatedAt = at;
+      store.activeProjectId = projectId;
+      delete store.resumeStatusByProject[projectId];
+      await root.saveProjectStore(store);
+      transitionResult = {
+        projectStoreVersion: store.schemaVersion,
+        activeProjectId: projectId,
+        projects: ProjectStore.listProjects(store),
+        project: store.projects[projectId]
+      };
+    } else {
+      if (typeof baseTransitionProjectState !== "function") throw new Error("Project transitions are unavailable.");
+      return baseTransitionProjectState(projectId, action);
+    }
+
+    const resumed = await resumeProjectStage(projectId);
+    store = await root.loadProjectStore();
+    return {
+      ...transitionResult,
+      activeProjectId: projectId,
+      projects: ProjectStore.listProjects(store),
+      project: store.projects[projectId],
+      resumed
+    };
+  }
+
+  function startResumeListener() {
+    if (!root.chrome?.runtime?.onMessage) return false;
+    root.chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (message?.scope !== RESUME_SCOPE || message?.type !== RESUME_TYPE) return false;
+      transitionGitHubProjectState(String(message.projectId || ""), "resume")
+        .then(result => sendResponse({ ok: true, ...result }))
+        .catch(error => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    });
+    return true;
+  }
+
   function install() {
     if (root[PATCH_FLAG]) return root[PATCH_FLAG];
     if (
@@ -88,52 +154,11 @@
       throw new Error("GitHub issue resume dependencies are unavailable.");
     }
 
-    const originalTransitionProjectState = root.transitionProjectState;
+    baseTransitionProjectState = root.transitionProjectState;
+    root.transitionProjectState = transitionGitHubProjectState;
+    const listenerStarted = startResumeListener();
 
-    root.transitionProjectState = async function transitionGitHubProjectState(projectId, action) {
-      if (action !== "resume") return originalTransitionProjectState(projectId, action);
-
-      let store = await root.loadProjectStore();
-      const project = store.projects?.[projectId];
-      if (!project) throw new Error("Project not found.");
-      if (!isIssueProject(project)) return originalTransitionProjectState(projectId, action);
-
-      const bootstraps = await loadBootstraps();
-      const bootstrap = bootstraps[projectId];
-      let transitionResult;
-
-      if (project.status === "paused") {
-        transitionResult = await originalTransitionProjectState(projectId, action);
-      } else if (bootstrapCanResume(bootstrap) || project.status === "failed") {
-        const status = resumedStatus(store, projectId);
-        const at = appendResumeEvent(store, projectId, status);
-        project.status = status;
-        project.updatedAt = at;
-        store.activeProjectId = projectId;
-        delete store.resumeStatusByProject[projectId];
-        await root.saveProjectStore(store);
-        transitionResult = {
-          projectStoreVersion: store.schemaVersion,
-          activeProjectId: projectId,
-          projects: ProjectStore.listProjects(store),
-          project: store.projects[projectId]
-        };
-      } else {
-        return originalTransitionProjectState(projectId, action);
-      }
-
-      const resumed = await resumeProjectStage(projectId);
-      store = await root.loadProjectStore();
-      return {
-        ...transitionResult,
-        activeProjectId: projectId,
-        projects: ProjectStore.listProjects(store),
-        project: store.projects[projectId],
-        resumed
-      };
-    };
-
-    const installed = { originalTransitionProjectState };
+    const installed = { originalTransitionProjectState: baseTransitionProjectState, listenerStarted };
     Object.defineProperty(root, PATCH_FLAG, { value: installed, enumerable: false });
     return installed;
   }
@@ -141,11 +166,15 @@
   return {
     MODE,
     BOOTSTRAP_KEY,
+    RESUME_SCOPE,
+    RESUME_TYPE,
     isIssueProject,
     bootstrapCanResume,
     resumedStatus,
     appendResumeEvent,
     resumeProjectStage,
+    transitionGitHubProjectState,
+    startResumeListener,
     install
   };
 });

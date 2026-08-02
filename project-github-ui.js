@@ -7,9 +7,13 @@
 })(typeof globalThis !== "undefined" ? globalThis : self, root => {
   const MAX_APPLY_ATTEMPTS = 20;
   const APPLY_RETRY_MS = 50;
-  const RESUME_REFRESH_MS = 250;
+  const RESUME_SCOPE = "AUTOPROMPTER_GITHUB_RESUME";
+  const RESUME_TYPE = "RESUME_PROJECT_STAGE";
+  const RESUME_GUARD = Symbol.for("autoprompter.githubResumeButton.guard");
+  const RESUME_BOUND = Symbol.for("autoprompter.githubResumeButton.bound");
+  const resumeRequests = new WeakSet();
   let started = false;
-  let resumeTimer = null;
+  let resumeObserver = null;
 
   function setText(node, value) {
     if (!node || node.textContent === value) return false;
@@ -73,17 +77,107 @@
     }
   }
 
+  function resumeState(documentApi) {
+    const status = String(documentApi.getElementById("projectStatusBadge")?.textContent || "").trim();
+    const bootstrapStatus = String(projectSnapshot(documentApi)?.autonomousBootstrap?.status || "").trim();
+    return {
+      status,
+      bootstrapStatus,
+      recoverableBootstrap: ["failed", "cancelled"].includes(bootstrapStatus)
+    };
+  }
+
+  function findPropertyDescriptor(node, property) {
+    let prototype = Object.getPrototypeOf(node);
+    while (prototype) {
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, property);
+      if (descriptor) return descriptor;
+      prototype = Object.getPrototypeOf(prototype);
+    }
+    return null;
+  }
+
+  function installResumeDisabledGuard(button, documentApi) {
+    if (!button || button[RESUME_GUARD]) return false;
+    const descriptor = findPropertyDescriptor(button, "disabled");
+    if (!descriptor?.get || !descriptor?.set) return false;
+    Object.defineProperty(button, "disabled", {
+      configurable: true,
+      enumerable: descriptor.enumerable,
+      get() {
+        return descriptor.get.call(button);
+      },
+      set(value) {
+        const forceEnabled = resumeState(documentApi).recoverableBootstrap && !resumeRequests.has(button);
+        descriptor.set.call(button, forceEnabled ? false : Boolean(value));
+      }
+    });
+    Object.defineProperty(button, RESUME_GUARD, { value: true });
+    return true;
+  }
+
+  function stageLabel(stage) {
+    return {
+      issue_manifest: "existing-issue recovery",
+      task_creation: "task creation",
+      issue_workers: "worker dispatch"
+    }[stage] || "stored project stage";
+  }
+
+  function bindResumeControl(documentApi = root.document) {
+    const button = documentApi?.getElementById?.("resumeProject");
+    if (!button || button[RESUME_BOUND]) return false;
+    installResumeDisabledGuard(button, documentApi);
+    button.addEventListener("click", event => {
+      const state = resumeState(documentApi);
+      if (!state.recoverableBootstrap) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (resumeRequests.has(button)) return;
+
+      const projectId = String(documentApi.getElementById("projectSelect")?.value || "").trim();
+      const message = documentApi.getElementById("projectMessage");
+      if (!projectId) {
+        if (message) message.textContent = "Choose a project before resuming its stored stage.";
+        return;
+      }
+
+      resumeRequests.add(button);
+      button.setAttribute?.("aria-busy", "true");
+      setText(button, "Resuming stage…");
+      if (message) message.textContent = "Resuming the saved GitHub project stage…";
+
+      Promise.resolve(root.chrome?.runtime?.sendMessage?.({
+        scope: RESUME_SCOPE,
+        type: RESUME_TYPE,
+        projectId
+      })).then(response => {
+        if (!response || response.ok === false) {
+          throw new Error(response?.error || "The background resume service did not respond.");
+        }
+        if (message) message.textContent = `Resumed ${stageLabel(response.resumed?.stage)}.`;
+      }).catch(error => {
+        if (message) message.textContent = error?.message || String(error);
+      }).finally(() => {
+        resumeRequests.delete(button);
+        button.removeAttribute?.("aria-busy");
+        applyResumeControl(documentApi);
+      });
+    }, true);
+    Object.defineProperty(button, RESUME_BOUND, { value: true });
+    return true;
+  }
+
   function applyResumeControl(documentApi = root.document) {
     if (!documentApi?.getElementById) return false;
     const button = documentApi.getElementById("resumeProject");
     if (!button) return false;
-    const status = String(documentApi.getElementById("projectStatusBadge")?.textContent || "").trim();
-    const bootstrapStatus = String(projectSnapshot(documentApi)?.autonomousBootstrap?.status || "").trim();
-    const recoverableBootstrap = ["failed", "cancelled"].includes(bootstrapStatus);
-    const enabled = status === "paused" || recoverableBootstrap;
-    if (button.disabled === enabled) button.disabled = !enabled;
-    setText(button, recoverableBootstrap ? "Resume stage" : "Resume");
-    const title = recoverableBootstrap
+    bindResumeControl(documentApi);
+    const state = resumeState(documentApi);
+    const enabled = state.status === "paused" || state.recoverableBootstrap;
+    button.disabled = !enabled;
+    if (!resumeRequests.has(button)) setText(button, state.recoverableBootstrap ? "Resume stage" : "Resume");
+    const title = state.recoverableBootstrap
       ? "Continue from the stored GitHub issue, task-creation, or worker stage without initializing completed roles again."
       : "Resume this paused project from its stored stage.";
     if (button.title !== title) button.title = title;
@@ -133,12 +227,22 @@
     );
   }
 
-  function startResumeControl(documentApi = root.document, timerApi = root) {
-    if (resumeTimer || !documentApi || typeof timerApi.setInterval !== "function") return false;
-    resumeTimer = timerApi.setInterval(() => applyResumeControl(documentApi), RESUME_REFRESH_MS);
+  function startResumeControl(documentApi = root.document) {
+    if (resumeObserver || !documentApi) return false;
+    bindResumeControl(documentApi);
+    const Observer = root.MutationObserver;
+    const targets = [
+      documentApi.getElementById("projectStatusBadge"),
+      documentApi.getElementById("projectInspectOutput")
+    ].filter(Boolean);
+    if (typeof Observer !== "function" || !targets.length) return true;
+    resumeObserver = new Observer(() => applyResumeControl(documentApi));
+    for (const target of targets) {
+      resumeObserver.observe(target, { childList: true, subtree: true, characterData: true });
+    }
     root.addEventListener?.("unload", () => {
-      if (resumeTimer && typeof timerApi.clearInterval === "function") timerApi.clearInterval(resumeTimer);
-      resumeTimer = null;
+      resumeObserver?.disconnect?.();
+      resumeObserver = null;
     }, { once: true });
     return true;
   }
@@ -152,7 +256,7 @@
       attempts += 1;
       const ready = apply(documentApi);
       if (!ready && attempts < MAX_APPLY_ATTEMPTS) timerApi.setTimeout(run, APPLY_RETRY_MS);
-      if (ready) startResumeControl(documentApi, timerApi);
+      if (ready) startResumeControl(documentApi);
     };
 
     if (documentApi.readyState === "loading") {
@@ -168,12 +272,17 @@
   return {
     MAX_APPLY_ATTEMPTS,
     APPLY_RETRY_MS,
-    RESUME_REFRESH_MS,
+    RESUME_SCOPE,
+    RESUME_TYPE,
     setText,
     setHidden,
     labelText,
     addModeNote,
     projectSnapshot,
+    resumeState,
+    findPropertyDescriptor,
+    installResumeDisabledGuard,
+    bindResumeControl,
     applyResumeControl,
     apply,
     startResumeControl,
