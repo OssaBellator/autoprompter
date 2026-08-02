@@ -123,5 +123,5 @@ test("extension adapts planner issue capture, persistent workers, and combined P
   assert.match(workflow, /reviewer and integrator/);
   assert.match(githubUi, /GitHub Issue and Pull Request Mode/);
   assert.match(githubUi, /Pull-request reviewer and merger chat/);
-  assert.equal(manifest.version, "4.0.0");
+  assert.equal(manifest.version, "4.0.1");
 });
