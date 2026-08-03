@@ -3,10 +3,9 @@
 (() => {
   const MESSAGE_SCOPE = "AUTOPROMPTER_RUNTIME";
   const RUNTIME_PROBE = "GET_SCHEDULER_STATE";
-  const RUNTIME_COMPATIBILITY_BUILD = "autocontinue-project-folders-v5";
+  const RUNTIME_COMPATIBILITY_BUILD = "autocontinue-self-repair-v5.1";
   const RELOAD_MARKER_KEY = "autoprompterRuntimeCompatibilityReload";
   const RELOAD_COOLDOWN_MS = 60_000;
-  const RETIRED_PROJECT_MESSAGE = "Project execution was retired in AutoPrompter 5. Projects now organize chats, repository details, and notes only.";
   const RUNTIME_MISMATCH_MESSAGE = [
     "AutoPrompter's popup and background runtime are out of sync.",
     "The extension attempted one automatic reload.",
@@ -17,18 +16,6 @@
     if (args?.[0] && typeof args[0] === "object") return args[0];
     if (args?.[1] && typeof args[1] === "object") return args[1];
     return null;
-  }
-
-  function isLegacyProjectCommand(command) {
-    const type = String(command || "");
-    return type.includes("PROJECT") || type.includes("PLANNER");
-  }
-
-  function retiredProjectResponse(command) {
-    const type = String(command || "");
-    if (type === "GET_PROJECTS") return { ok: true, projects: [], activeProjectId: null };
-    if (type === "GET_PROJECT_BOOTSTRAP") return { ok: true, bootstrap: null };
-    return { ok: false, error: RETIRED_PROJECT_MESSAGE };
   }
 
   function isUnknownRuntimeCommand(response, command) {
@@ -121,9 +108,6 @@
     runtime.sendMessage = (...args) => gate.then(async () => {
       const message = messageArgument(args);
       const runtimeCommand = message?.scope === MESSAGE_SCOPE;
-      if (runtimeCommand && isLegacyProjectCommand(message.type)) {
-        return retiredProjectResponse(message.type);
-      }
       if (runtimeMismatch && runtimeCommand) {
         await attemptRuntimeReload(chromeApi, options);
         return runtimeMismatchResponse();
@@ -151,25 +135,29 @@
     return true;
   }
 
-  function loadProjectFolders(chromeApi, documentApi = globalThis.document) {
+  function loadPopupExtensions(chromeApi, documentApi = globalThis.document) {
     if (!documentApi?.createElement) return false;
-    const load = () => appendScript(
-      chromeApi,
-      documentApi,
-      "autoprompterProjectFoldersCore",
-      "project-folders.js",
-      () => appendScript(
+    const load = () => {
+      appendScript(
         chromeApi,
         documentApi,
-        "autoprompterProjectFoldersUi",
-        "project-folders-ui.js"
-      )
-    );
+        "autoprompterProjectFoldersCore",
+        "project-folders.js",
+        () => appendScript(
+          chromeApi,
+          documentApi,
+          "autoprompterProjectFoldersUi",
+          "project-folders-ui.js"
+        )
+      );
+      appendScript(chromeApi, documentApi, "autoprompterSelfRepairUi", "self-repair-ui.js");
+    };
     if (documentApi.readyState === "loading") {
       documentApi.addEventListener("DOMContentLoaded", load, { once: true });
       return true;
     }
-    return load();
+    load();
+    return true;
   }
 
   const exported = {
@@ -178,10 +166,7 @@
     RELOAD_MARKER_KEY,
     RELOAD_COOLDOWN_MS,
     RUNTIME_COMPATIBILITY_BUILD,
-    RETIRED_PROJECT_MESSAGE,
     RUNTIME_MISMATCH_MESSAGE,
-    isLegacyProjectCommand,
-    retiredProjectResponse,
     isUnknownRuntimeCommand,
     runtimeFingerprint,
     shouldAttemptRuntimeReload,
@@ -190,13 +175,13 @@
     probeRuntime,
     installRuntimeCompatibilityGate,
     appendScript,
-    loadProjectFolders
+    loadPopupExtensions
   };
 
   if (typeof module === "object" && module.exports) {
     module.exports = exported;
   } else if (globalThis.chrome?.runtime?.sendMessage) {
     installRuntimeCompatibilityGate(globalThis.chrome);
-    loadProjectFolders(globalThis.chrome);
+    loadPopupExtensions(globalThis.chrome);
   }
 })();
