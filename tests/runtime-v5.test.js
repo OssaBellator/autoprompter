@@ -14,21 +14,25 @@ function read(name) {
 
 test("manifest loads AutoContinue and the isolated repair content worker", () => {
   const manifest = JSON.parse(read("manifest.json"));
-  assert.equal(manifest.version, "5.1.0");
+  assert.equal(manifest.version, "5.1.1");
   assert.deepEqual(manifest.content_scripts[0].js, ["content.js", "self-repair-content.js"]);
   assert.deepEqual(manifest.permissions, ["storage", "tabs", "notifications"]);
   assert.deepEqual(manifest.host_permissions, ["https://chatgpt.com/*", "https://chat.openai.com/*"]);
 });
 
-test("service worker installs recovery adapters before deferred terminal dispatch", () => {
+test("service worker repairs scheduler state before installing recovery adapters", () => {
   const entry = read("background-entry.js");
+  assert.match(entry, /autocontinue-state-guard\.js/);
   assert.match(entry, /autocontinue-unlimited-retries\.js/);
   assert.match(entry, /autocontinue-extended-thinking\.js/);
   assert.match(entry, /autocontinue-transient-thinking\.js/);
   assert.match(entry, /autocontinue-deferred-dispatch\.js/);
   assert.match(entry, /autocontinue-self-repair\.js/);
+  assert.match(entry, /AutoPrompterStateGuard\.install\(\)/);
   assert.match(entry, /AutoPrompterTransientThinkingRecovery\.install\(\)/);
   assert.match(entry, /AutoPrompterDeferredDispatch\.install\(\)/);
+  assert.ok(entry.indexOf("AutoPrompterStateGuard.install()")
+    < entry.indexOf("AutoPrompterUnlimitedConnectionRetries.install()"));
   assert.ok(entry.indexOf("AutoPrompterTransientThinkingRecovery.install()")
     < entry.indexOf("AutoPrompterDeferredDispatch.install()"));
   assert.doesNotMatch(entry, /project-mode-retirement|project-github|project-orchestrator|project-task-board|planner-compiler|project-role-kick/);
