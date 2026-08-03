@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AutoPrompter for ChatGPT",
-  "version": "5.0.1",
-  "description": "Run reliable AutoContinue workflows with per-chat context, successor recovery, and lightweight chat project folders.",
+  "version": "5.1.0",
+  "description": "Run reliable AutoContinue workflows with per-chat context, chat folders, successor recovery, and bounded automatic self-repair.",
   "minimum_chrome_version": "102",
   "permissions": [
     "storage",
@@ -27,7 +27,8 @@
         "https://chat.openai.com/*"
       ],
       "js": [
-        "content.js"
+        "content.js",
+        "self-repair-content.js"
       ],
       "run_at": "document_idle"
     }
