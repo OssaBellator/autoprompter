@@ -13,196 +13,124 @@ h1 { margin: 0; font-size: 20px; }
 header p { margin: 3px 0 0; color: GrayText; font-size: 12px; }
 label { display: block; font-weight: 650; font-size: 12px; }
 textarea, input, select {
-  width: 100%; margin-top: 6px; border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
-  border-radius: 8px; background: Canvas; color: CanvasText; font: inherit;
+  width: 100%;
+  margin-top: 6px;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  border-radius: 8px;
+  background: Canvas;
+  color: CanvasText;
+  font: inherit;
 }
 textarea { resize: vertical; min-height: 72px; padding: 9px; line-height: 1.35; }
-input { padding: 8px; }
-textarea:focus, input:focus, select:focus, button:focus-visible, summary:focus-visible { outline: 2px solid Highlight; outline-offset: 1px; }
+input, select { padding: 8px; }
+textarea:focus, input:focus, select:focus, button:focus-visible, summary:focus-visible {
+  outline: 2px solid Highlight;
+  outline-offset: 1px;
+}
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
 .options { margin-top: 12px; }
 .check-row { display: flex; align-items: flex-start; gap: 8px; font-weight: 600; margin-top: 8px; }
 .check-row input { width: auto; margin: 2px 0 0; }
 .check-row.nested { margin-left: 24px; color: GrayText; }
-.continuity { margin-top: 14px; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 9px; overflow: hidden; }
-.continuity summary { padding: 10px 12px; cursor: pointer; font-weight: 700; background: color-mix(in srgb, CanvasText 5%, transparent); }
+.continuity, .progress-panel {
+  margin-top: 14px;
+  border: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.continuity summary, .progress-panel summary {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 700;
+  background: color-mix(in srgb, CanvasText 5%, transparent);
+}
 .details-body { padding: 4px 12px 12px; }
 .details-body > label:not(.check-row) { margin-top: 12px; }
-.warning { margin: 10px 0 0; padding: 9px; border-left: 3px solid #b7791f; background: color-mix(in srgb, #b7791f 10%, transparent); font-size: 11px; line-height: 1.4; }
+.warning {
+  margin: 10px 0 0;
+  padding: 9px;
+  border-left: 3px solid #b7791f;
+  background: color-mix(in srgb, #b7791f 10%, transparent);
+  font-size: 11px;
+  line-height: 1.4;
+}
 .picker { margin-top: 16px; border-top: 1px solid color-mix(in srgb, CanvasText 14%, transparent); padding-top: 14px; }
-.picker-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.picker-heading, .project-toolbar, .self-repair-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
 .picker-heading strong, .picker-heading small { display: block; }
 .picker-heading small { color: GrayText; margin-top: 2px; }
 button {
-  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: 8px;
-  padding: 9px 12px; background: ButtonFace; color: ButtonText; font: inherit; font-weight: 650; cursor: pointer;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  border-radius: 8px;
+  padding: 9px 12px;
+  background: ButtonFace;
+  color: ButtonText;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
 }
 button.primary { border-color: transparent; background: #0f766e; color: white; }
-button:disabled, input:disabled, textarea:disabled, select:disabled { opacity: .5; cursor: default; }
-button.compact { padding: 6px 10px; font-size: 12px; }
-.filter { margin-top: 10px; }
-.bulk-actions { display: flex; gap: 12px; margin: 8px 1px 6px; }
-.link-button { padding: 0; border: 0; background: transparent; color: LinkText; font-size: 12px; font-weight: 600; }
-.chat-list {
-  max-height: 220px; overflow: auto; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
-  border-radius: 8px; background: color-mix(in srgb, CanvasText 3%, transparent);
+button.compact { padding: 7px 10px; white-space: nowrap; }
+button:disabled { cursor: not-allowed; opacity: 0.5; }
+.filter { margin-top: 12px; }
+.bulk-actions { display: flex; justify-content: flex-end; gap: 12px; margin: 8px 0; }
+.link-button { border: 0; padding: 0; background: transparent; color: LinkText; font-size: 12px; }
+.chat-list { max-height: 260px; overflow: auto; border: 1px solid color-mix(in srgb, CanvasText 12%, transparent); border-radius: 8px; }
+.chat-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
+  font-weight: 500;
 }
-.chat-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 9px; border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent); }
 .chat-row:last-child { border-bottom: 0; }
 .chat-row input { width: auto; margin: 0; }
-.chat-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
-.chat-progress { color: GrayText; font-size: 11px; white-space: nowrap; max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
-.chat-progress.error { color: #d93025; }
-.empty { padding: 18px; text-align: center; color: GrayText; font-size: 12px; }
-.hint, .note { margin: 8px 2px 0; color: GrayText; font-size: 11px; line-height: 1.35; }
-.actions { display: flex; gap: 8px; margin-top: 16px; }
-.actions button { flex: 1; }
-.status { display: flex; align-items: flex-start; gap: 9px; margin-top: 14px; padding: 10px; border-radius: 8px; background: color-mix(in srgb, CanvasText 7%, transparent); }
+.chat-title { display: inline-block; max-width: 330px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fresh-start-button { width: 32px; height: 30px; padding: 0; }
+.fresh-start-button.active { background: color-mix(in srgb, Highlight 22%, ButtonFace); border-color: Highlight; }
+.configured-badge, .fresh-start-badge {
+  display: inline-block;
+  margin-top: 3px;
+  color: GrayText;
+  font-size: 10px;
+  font-weight: 650;
+}
+.fresh-start-badge { color: Highlight; }
+.empty { padding: 14px; color: GrayText; text-align: center; }
+.hint, .note { color: GrayText; font-size: 11px; line-height: 1.4; }
+.inline-actions, .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.actions button { flex: 1 1 130px; }
+.progress-panel summary { display: flex; justify-content: space-between; }
+.progress-panel summary small { color: GrayText; }
+.progress-list { padding: 4px 12px 12px; }
+.progress-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent); }
+.progress-row:last-child { border-bottom: 0; }
+.progress-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+.progress-meta { color: GrayText; }
+.progress-value { font-variant-numeric: tabular-nums; font-weight: 700; }
+.progress-value.error { color: #b42318; }
+.status { display: flex; align-items: flex-start; gap: 9px; margin-top: 14px; padding: 10px; border-radius: 8px; background: color-mix(in srgb, CanvasText 5%, transparent); }
 .status strong, .status small { display: block; }
-.status small { margin-top: 2px; color: GrayText; overflow-wrap: anywhere; }
+.status small { margin-top: 2px; color: GrayText; }
 .dot { width: 9px; height: 9px; margin-top: 4px; border-radius: 50%; background: GrayText; flex: 0 0 auto; }
-.dot.running { background: #0f9d58; }
-.dot.error { background: #d93025; }
-
-select { width: 100%; margin-top: 6px; padding: 8px; border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: 8px; background: Canvas; color: CanvasText; font: inherit; }
-.inline-actions { display: flex; gap: 8px; margin-top: 12px; }
-.inline-actions button { flex: 1; }
-.configured-badge { color: #0f766e; font-size: 10px; font-weight: 700; }
-
-.fresh-start-button { width: 28px; height: 28px; padding: 0; border-radius: 999px; font-size: 15px; line-height: 1; color: GrayText; }
-.fresh-start-button.active { background: #0f766e; color: white; border-color: transparent; }
-.fresh-start-badge { color: #8a5a00; font-size: 10px; font-weight: 700; }
-.progress-panel { margin-top: 10px; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 9px; overflow: hidden; }
-.progress-panel summary { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; cursor: pointer; font-weight: 700; background: color-mix(in srgb, CanvasText 5%, transparent); }
-.progress-panel summary small { color: GrayText; font-weight: 600; }
-.progress-list { max-height: 270px; overflow: auto; }
-.progress-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 10px 12px; border-top: 1px solid color-mix(in srgb, CanvasText 10%, transparent); }
-.progress-row:first-child { border-top: 0; }
-.progress-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 650; }
-.progress-meta { display: block; margin-top: 2px; color: GrayText; font-size: 10px; }
-.progress-value { color: GrayText; font-size: 11px; text-align: right; white-space: nowrap; }
-.progress-value.error { color: #d93025; }
-
-.project-mode { margin-top: 16px; }
-.project-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; margin-top: 10px; }
-.project-toolbar button { margin-bottom: 1px; }
-.project-status-card { margin-top: 10px; padding: 10px; border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius: 8px; background: color-mix(in srgb, CanvasText 4%, transparent); }
-.project-status-card strong, .project-status-card small { display: block; }
-.project-status-card small { margin-top: 3px; color: GrayText; }
-.project-status-card pre { max-height: 150px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 9px 0 0; padding: 8px; border-radius: 6px; background: color-mix(in srgb, CanvasText 6%, transparent); font-size: 10px; line-height: 1.35; }
-.project-status-badge { display: inline-block; margin-top: 5px; padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, #0f766e 16%, transparent); color: #0f766e; font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .03em; }
-.project-create { width: 100%; margin-top: 12px; }
-
-.planner-workbench {
-  display: grid;
-  gap: 8px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-}
-
-.planner-workbench textarea {
-  min-height: 110px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
-}
-
-.planner-workbench pre {
-  max-height: 180px;
-}
-
-.worker-workbench {
-  display: grid;
-  gap: 8px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
-}
-
-.worker-workbench textarea {
-  min-height: 120px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
-}
-
-.project-worker-state {
-  display: grid;
-  gap: 6px;
-  margin-top: 4px;
-}
-
-.project-worker-row,
-.project-task-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 7px 8px;
-  border: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, CanvasText 3%, transparent);
-  font-size: 11px;
-}
-
-.project-worker-row small,
-.project-task-row small {
-  color: GrayText;
-  text-align: right;
-}
-
-
-.project-dispatch-confirmation { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border: 1px solid color-mix(in srgb, #b45309 28%, transparent); border-radius: 6px; background: color-mix(in srgb, #f59e0b 10%, transparent); }
-.project-dispatch-confirmation input { width: auto; margin-top: 2px; }
-.result-review-workbench, .integration-workbench { display: grid; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, CanvasText 14%, transparent); }
-.result-review-workbench textarea, .integration-workbench textarea { min-height: 110px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
-
-.approval-workbench,
-.reconciliation-workbench,
-.selector-health-workbench {
-  display: grid;
-  gap: 8px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
-}
-.approval-workbench textarea,
-.reconciliation-workbench textarea {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
-}
-.reconciliation-workbench pre,
-.selector-health-workbench pre {
-  max-height: 180px;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-
-.project-tabs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-  margin: 8px 0 10px;
-  padding: 4px;
-  border: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
-  border-radius: 9px;
-  background: color-mix(in srgb, CanvasText 4%, transparent);
-}
-.project-tab {
-  border: 0;
-  padding: 8px 10px;
-  background: transparent;
-  color: GrayText;
-}
-.project-tab.active {
-  background: Canvas;
-  color: CanvasText;
-  box-shadow: 0 1px 3px color-mix(in srgb, CanvasText 16%, transparent);
-}
-.project-tab-panel { min-width: 0; }
-.project-tab-panel > .hint:first-child { margin-top: 2px; }
-.project-message {
-  min-height: 15px;
-  padding-top: 2px;
-  overflow-wrap: anywhere;
+.dot.running { background: #16a34a; box-shadow: 0 0 0 3px color-mix(in srgb, #16a34a 18%, transparent); }
+.dot.error { background: #dc2626; }
+.project-toolbar label { flex: 1; }
+.self-repair-status { margin-top: 12px; display: grid; gap: 8px; }
+.self-repair-card { padding: 10px; border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius: 8px; }
+.self-repair-card p { margin: 7px 0; font-size: 12px; line-height: 1.4; }
+.self-repair-card small, .self-repair-card code, .self-repair-card a { display: block; margin-top: 6px; overflow-wrap: anywhere; }
+.self-repair-badge { padding: 3px 6px; border-radius: 999px; background: color-mix(in srgb, CanvasText 8%, transparent); font-size: 10px; font-weight: 700; }
+.self-repair-merged { border-color: color-mix(in srgb, #16a34a 55%, transparent); }
+.self-repair-failed, .self-repair-blocked { border-color: color-mix(in srgb, #dc2626 55%, transparent); }
+.note { margin-bottom: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .dot.running { animation: pulse 1.8s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.55; } }
 }
