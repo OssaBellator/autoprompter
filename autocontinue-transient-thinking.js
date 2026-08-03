@@ -17,8 +17,16 @@
       .replace(/^(?:error|warning|notice)\s*[:–—-]\s*/i, "");
   }
 
+  function transientStatusName(value) {
+    const normalized = normalize(value);
+    return normalized
+      .split(/\s+\|\s+/)
+      .map(part => part.trim())
+      .find(part => TRANSIENT_STATUS.test(part)) || "";
+  }
+
   function isTransientThinkingStatus(value) {
-    return TRANSIENT_STATUS.test(normalize(value));
+    return Boolean(transientStatusName(value));
   }
 
   function nextAction(currentCount) {
@@ -89,16 +97,18 @@
     };
 
     runtime.interruptJob = async function interruptWithTransientThinkingRecovery(message, sender) {
-      const transient = String(message?.kind || "") === "stalled"
-        && isTransientThinkingStatus(message?.message);
-      if (!transient) return originalInterruptJob(message, sender);
+      const statusName = transientStatusName(message?.message);
+      const transient = String(message?.kind || "") === "stalled" && Boolean(statusName);
+      if (!transient) {
+        await resetCount(runtime, message, sender);
+        return originalInterruptJob(message, sender);
+      }
 
       const state = await runtime.loadState();
       const index = runtime.findChatIndexForMessage(state, message, sender);
       if (index < 0) return originalInterruptJob(message, sender);
       const chat = state.chats[index];
       const decision = nextAction(chat.transientThinkingRepeatCount);
-      const statusName = normalize(message.message);
 
       if (decision.action === "new_chat") {
         chat.transientThinkingRepeatCount = 0;
@@ -162,6 +172,7 @@
 
   return {
     MAX_SAME_CHAT_RELOADS,
+    transientStatusName,
     isTransientThinkingStatus,
     nextAction,
     findCurrentIndex,
