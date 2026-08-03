@@ -2,17 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-
-function loadModuleWithRoot(root) {
-  const modulePath = require.resolve("../autocontinue-deferred-dispatch.js");
-  delete require.cache[modulePath];
-  const previous = globalThis.AutoPrompterDeferredDispatch;
-  Object.assign(globalThis, root);
-  const api = require(modulePath);
-  if (previous === undefined) delete globalThis.AutoPrompterDeferredDispatch;
-  else globalThis.AutoPrompterDeferredDispatch = previous;
-  return api;
-}
+const DeferredDispatch = require("../autocontinue-deferred-dispatch.js");
 
 function fixture() {
   const timers = [];
@@ -32,7 +22,7 @@ function fixture() {
     }]
   };
   let queueCalls = 0;
-  const root = {
+  const runtime = {
     setTimeout(callback) {
       timers.push(callback);
       return timers.length;
@@ -56,10 +46,10 @@ function fixture() {
       return { queued: true };
     }
   };
-  for (const name of ["finishJob", "interruptJob", "successorCreated"]) {
-    root[name] = async () => root.queueNextChatJob(state, 0);
+  for (const name of DeferredDispatch.TERMINAL_METHODS) {
+    runtime[name] = async () => runtime.queueNextChatJob(state, 0);
   }
-  return { root, state, timers, queueCalls: () => queueCalls };
+  return { runtime, state, timers, queueCalls: () => queueCalls };
 }
 
 async function flushScheduled(timers) {
@@ -70,10 +60,9 @@ async function flushScheduled(timers) {
 
 test("successful completion is acknowledged before the next prompt is dispatched", async () => {
   const setup = fixture();
-  const api = loadModuleWithRoot(setup.root);
-  assert.ok(api.install());
+  assert.ok(DeferredDispatch.install(setup.runtime));
 
-  const result = await globalThis.finishJob({ jobId: "first" }, {});
+  const result = await setup.runtime.finishJob({ jobId: "first" }, {});
   assert.deepEqual(result, { running: true });
   assert.equal(setup.queueCalls(), 0);
   assert.equal(setup.state.chats[0].currentJobId, null);
@@ -85,10 +74,9 @@ test("successful completion is acknowledged before the next prompt is dispatched
 
 test("recoverable interruption also waits for its acknowledgement before retrying", async () => {
   const setup = fixture();
-  const api = loadModuleWithRoot(setup.root);
-  assert.ok(api.install());
+  assert.ok(DeferredDispatch.install(setup.runtime));
 
-  await globalThis.interruptJob({ jobId: "retry" }, {});
+  await setup.runtime.interruptJob({ jobId: "retry" }, {});
   assert.equal(setup.queueCalls(), 0);
   await flushScheduled(setup.timers);
   assert.equal(setup.queueCalls(), 1);
@@ -96,10 +84,9 @@ test("recoverable interruption also waits for its acknowledgement before retryin
 
 test("stale or already-queued state suppresses duplicate delayed dispatch", async () => {
   const setup = fixture();
-  const api = loadModuleWithRoot(setup.root);
-  assert.ok(api.install());
+  assert.ok(DeferredDispatch.install(setup.runtime));
 
-  await globalThis.finishJob({ jobId: "first" }, {});
+  await setup.runtime.finishJob({ jobId: "first" }, {});
   setup.state.chats[0].currentJobId = "already-queued";
   await flushScheduled(setup.timers);
   assert.equal(setup.queueCalls(), 0);
