@@ -3,6 +3,33 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const Recovery = require("../autocontinue-transient-thinking.js");
+const Deferred = require("../autocontinue-deferred-dispatch.js");
+
+function controlledQueue() {
+  const pending = [];
+  return {
+    pending,
+    enqueue(operation) {
+      let resolvePromise;
+      let rejectPromise;
+      const promise = new Promise((resolve, reject) => {
+        resolvePromise = resolve;
+        rejectPromise = reject;
+      });
+      pending.push(async () => {
+        try {
+          const result = await operation();
+          resolvePromise(result);
+          return result;
+        } catch (error) {
+          rejectPromise(error);
+          throw error;
+        }
+      });
+      return promise;
+    }
+  };
+}
 
 test("recognizes only bare transient generation statuses", () => {
   assert.equal(Recovery.isTransientThinkingStatus("Thinking"), true);
@@ -13,12 +40,15 @@ test("recognizes only bare transient generation statuses", () => {
   assert.equal(Recovery.isTransientThinkingStatus("Our systems are thinking a bit more about this request"), false);
 });
 
-test("reloads the same chat three times and starts a fresh chat on the fourth stale status", async () => {
+test("acknowledges before reloading the same chat or starting a fresh chat", async () => {
   const calls = [];
+  const queue = controlledQueue();
   const state = {
     running: true,
     token: 7,
     chats: [{
+      id: "chat-2",
+      chainId: "chat-2",
       title: "Second selected chat",
       workerTabId: 42,
       currentJobId: "job-1",
@@ -28,21 +58,26 @@ test("reloads the same chat three times and starts a fresh chat on the fourth st
       transientThinkingRepeatCount: 0,
       connectionRetryCount: 0,
       rolloverCount: 0,
-      settings: { maxRollovers: 1 }
+      sentCount: 0,
+      failed: false,
+      retired: false,
+      settings: { maxRollovers: 1, maxContinuations: 5 }
     }]
   };
   const sender = { tab: { id: 42 } };
   const runtime = {
     chrome: {
       tabs: {
-        async update(tabId, update) {
-          calls.push(["reload", tabId, update]);
-          return { id: tabId, ...update };
+        async reload(tabId) {
+          calls.push(["reload", tabId]);
         }
       }
     },
+    enqueue: queue.enqueue,
     async loadState() { return state; },
     async saveState() { calls.push(["save"]); },
+    publicState(current) { return { running: Boolean(current?.running), status: current?.chats?.[0]?.status || "" }; },
+    isChatEligible(_state, chat) { return !chat.failed && !chat.retired && Number(chat.sentCount || 0) < 5; },
     findChatIndexForMessage(current, message, currentSender) {
       return current.running
         && message.token === current.token
@@ -71,10 +106,16 @@ test("reloads the same chat three times and starts a fresh chat on the fourth st
     async finishJob() {
       calls.push(["original-finish"]);
       return { finished: true };
+    },
+    async successorCreated() {
+      calls.push(["original-successor-created"]);
+      return { created: true };
     }
   };
 
   assert.equal(Recovery.install(runtime), true);
+  assert.ok(Deferred.install(runtime));
+
   const first = await runtime.interruptJob({
     kind: "stalled",
     message: "Thinking",
@@ -82,10 +123,16 @@ test("reloads the same chat three times and starts a fresh chat on the fourth st
     jobId: "job-1"
   }, sender);
 
-  assert.deepEqual(first, { queued: true });
+  assert.equal(first.running, true);
   assert.equal(state.chats[0].transientThinkingRepeatCount, 1);
   assert.equal(state.chats[0].contentReady, false);
-  assert.equal(calls.some(call => call[0] === "reload" && call[1] === 42 && call[2].url === "about:blank"), true);
+  assert.equal(state.chats[0].forceReloadBeforeNext, true);
+  assert.equal(calls.some(call => call[0] === "reload"), false);
+  assert.equal(calls.some(call => call[0] === "queue"), false);
+  assert.equal(queue.pending.length, 1);
+
+  await queue.pending.shift()();
+  assert.equal(calls.some(call => call[0] === "reload" && call[1] === 42), true);
   assert.equal(calls.some(call => call[0] === "queue"), true);
   assert.equal(calls.some(call => call[0] === "successor"), false);
   assert.equal(calls.some(call => call[0] === "original-interrupt"), false);
@@ -101,7 +148,11 @@ test("reloads the same chat three times and starts a fresh chat on the fourth st
     jobId: "job-4"
   }, sender);
 
-  assert.deepEqual(fourth, { successor: true });
+  assert.equal(fourth.running, true);
+  assert.equal(calls.some(call => call[0] === "successor"), false);
+  assert.equal(queue.pending.length, 1);
+
+  await queue.pending.shift()();
   const successor = calls.find(call => call[0] === "successor");
   assert.equal(successor[2].forceFreshStart, true);
   assert.equal(successor[2].transientThinkingRecovery, true);
@@ -117,9 +168,11 @@ test("a successful completion resets the stale-status counter", async () => {
   };
   let originalFinished = false;
   const runtime = {
-    chrome: { tabs: { async update() {} } },
+    chrome: { tabs: { async reload() {} } },
+    enqueue(operation) { return Promise.resolve().then(operation); },
     async loadState() { return state; },
     async saveState() {},
+    publicState(current) { return current; },
     findChatIndexForMessage(current, message, sender) {
       return message.token === current.token
         && message.jobId === current.chats[0].currentJobId
