@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AutoPrompter for ChatGPT",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "description": "Run reliable AutoContinue workflows with per-chat context, successor recovery, and lightweight chat project folders.",
   "minimum_chrome_version": "102",
   "permissions": [
