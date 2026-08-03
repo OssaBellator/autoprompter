@@ -1,11 +1,12 @@
 "use strict";
 
-importScripts(
-  "autocontinue-runtime-boundary.js",
-  "background.js"
-);
+importScripts("autocontinue-runtime-boundary.js");
+if (!globalThis.AutoPrompterRuntimeBoundary?.install()) {
+  throw new Error("AutoPrompter could not install the runtime message boundary.");
+}
 
-globalThis.AutoPrompterRuntimeBoundary?.finalize();
+importScripts("background.js");
+globalThis.AutoPrompterRuntimeBoundary.finalize();
 
 importScripts(
   "autocontinue-state-guard.js",
@@ -17,8 +18,7 @@ importScripts(
 );
 
 if (
-  !globalThis.AutoPrompterRuntimeBoundary
-  || !globalThis.AutoPrompterStateGuard
+  !globalThis.AutoPrompterStateGuard
   || !globalThis.AutoPrompterUnlimitedConnectionRetries
   || !globalThis.AutoPrompterExtendedThinkingRecovery
   || !globalThis.AutoPrompterTransientThinkingRecovery
