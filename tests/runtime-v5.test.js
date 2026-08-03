@@ -77,6 +77,16 @@ test("folder and self-repair popup adapters are loaded without legacy command co
   assert.doesNotMatch(source, /project-mode-retirement|project-github-ui\.js|project-ui\.js/);
 });
 
+test("popup normalizes scheduler snapshots before the main renderer loads", () => {
+  const html = read("popup.html");
+  const safety = read("popup-state-safety.js");
+  assert.match(html, /popup-state-safety\.js/);
+  assert.ok(html.indexOf('src="popup-state-safety.js"') < html.indexOf('src="popup.js"'));
+  assert.match(safety, /normalizeSchedulerResponse/);
+  assert.match(safety, /normalizeChat/);
+  assert.match(safety, /filter\(Boolean\)/);
+});
+
 test("popup folder adapter provides notes and scheduler enrichment", () => {
   const source = read("project-folders-ui.js");
   assert.match(source, /chatNotes/);
