@@ -5,14 +5,14 @@ importScripts(
   "autocontinue-unlimited-retries.js",
   "autocontinue-extended-thinking.js",
   "autocontinue-deferred-dispatch.js",
-  "project-mode-retirement.js"
+  "autocontinue-self-repair.js"
 );
 
 if (
   !globalThis.AutoPrompterUnlimitedConnectionRetries
   || !globalThis.AutoPrompterExtendedThinkingRecovery
   || !globalThis.AutoPrompterDeferredDispatch
-  || !globalThis.AutoPrompterProjectModeRetirement
+  || !globalThis.AutoPrompterSelfRepair
 ) {
   throw new Error("AutoPrompter AutoContinue runtime failed to initialize.");
 }
@@ -20,4 +20,4 @@ if (
 globalThis.AutoPrompterUnlimitedConnectionRetries.install();
 globalThis.AutoPrompterExtendedThinkingRecovery.install();
 globalThis.AutoPrompterDeferredDispatch.install();
-globalThis.AutoPrompterProjectModeRetirement.retire().catch(() => {});
+globalThis.AutoPrompterSelfRepair.install();
