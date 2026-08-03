@@ -20,21 +20,24 @@ test("manifest loads AutoContinue and the isolated repair content worker", () =>
   assert.deepEqual(manifest.host_permissions, ["https://chatgpt.com/*", "https://chat.openai.com/*"]);
 });
 
-test("service worker routes terminal messages through final recovery handlers", () => {
+test("service worker routes all scheduler commands through final runtime functions", () => {
   const entry = read("background-entry.js");
   assert.match(entry, /autocontinue-runtime-boundary\.js/);
+  assert.match(entry, /AutoPrompterRuntimeBoundary\?\.install\(\)/);
+  assert.match(entry, /AutoPrompterRuntimeBoundary\.finalize\(\)/);
   assert.match(entry, /autocontinue-state-guard\.js/);
   assert.match(entry, /autocontinue-unlimited-retries\.js/);
   assert.match(entry, /autocontinue-extended-thinking\.js/);
   assert.match(entry, /autocontinue-transient-thinking\.js/);
   assert.match(entry, /autocontinue-deferred-dispatch\.js/);
   assert.match(entry, /autocontinue-self-repair\.js/);
-  assert.match(entry, /AutoPrompterRuntimeBoundary\?\.finalize\(\)/);
   assert.match(entry, /AutoPrompterStateGuard\.install\(\)/);
   assert.match(entry, /AutoPrompterTransientThinkingRecovery\.install\(\)/);
   assert.match(entry, /AutoPrompterDeferredDispatch\.install\(\)/);
-  assert.ok(entry.indexOf('"autocontinue-runtime-boundary.js"') < entry.indexOf('"background.js"'));
-  assert.ok(entry.indexOf("AutoPrompterRuntimeBoundary?.finalize()") < entry.indexOf('"autocontinue-state-guard.js"'));
+  assert.ok(entry.indexOf('importScripts("autocontinue-runtime-boundary.js")')
+    < entry.indexOf('importScripts("background.js")'));
+  assert.ok(entry.indexOf("AutoPrompterRuntimeBoundary.finalize()")
+    < entry.indexOf('"autocontinue-state-guard.js"'));
   assert.ok(entry.indexOf("AutoPrompterStateGuard.install()")
     < entry.indexOf("AutoPrompterUnlimitedConnectionRetries.install()"));
   assert.ok(entry.indexOf("AutoPrompterTransientThinkingRecovery.install()")
