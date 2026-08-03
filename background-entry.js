@@ -2,7 +2,12 @@
 
 importScripts(
   "autocontinue-runtime-boundary.js",
-  "background.js",
+  "background.js"
+);
+
+globalThis.AutoPrompterRuntimeBoundary?.finalize();
+
+importScripts(
   "autocontinue-state-guard.js",
   "autocontinue-unlimited-retries.js",
   "autocontinue-extended-thinking.js",
@@ -23,7 +28,6 @@ if (
   throw new Error("AutoPrompter AutoContinue runtime failed to initialize.");
 }
 
-globalThis.AutoPrompterRuntimeBoundary.finalize();
 globalThis.AutoPrompterStateGuard.install();
 globalThis.AutoPrompterUnlimitedConnectionRetries.install();
 globalThis.AutoPrompterExtendedThinkingRecovery.install();
