@@ -6,9 +6,7 @@
   root.AutoPrompterDeferredDispatch = api;
 })(typeof globalThis !== "undefined" ? globalThis : self, root => {
   const TERMINAL_METHODS = Object.freeze(["finishJob", "interruptJob", "successorCreated"]);
-  const scheduled = new Map();
-  let installed = false;
-  let terminalDepth = 0;
+  const installations = new WeakMap();
 
   function chatKey(state, index) {
     const chat = state?.chats?.[index];
@@ -24,43 +22,46 @@
     );
   }
 
-  function install() {
-    if (installed) return installed;
+  function install(target = root) {
+    if (installations.has(target)) return installations.get(target);
     if (
-      typeof root.queueNextChatJob !== "function"
-      || typeof root.loadState !== "function"
-      || typeof root.publicState !== "function"
-      || typeof root.isChatEligible !== "function"
-      || typeof root.enqueue !== "function"
-      || TERMINAL_METHODS.some(name => typeof root[name] !== "function")
+      !target
+      || typeof target.queueNextChatJob !== "function"
+      || typeof target.loadState !== "function"
+      || typeof target.publicState !== "function"
+      || typeof target.isChatEligible !== "function"
+      || typeof target.enqueue !== "function"
+      || TERMINAL_METHODS.some(name => typeof target[name] !== "function")
     ) return false;
 
-    const originalQueueNextChatJob = root.queueNextChatJob;
+    const scheduled = new Map();
+    let terminalDepth = 0;
+    const originalQueueNextChatJob = target.queueNextChatJob;
     const originalTerminalMethods = Object.fromEntries(
-      TERMINAL_METHODS.map(name => [name, root[name]])
+      TERMINAL_METHODS.map(name => [name, target[name]])
     );
 
-    root.queueNextChatJob = async function queueOnNextBackgroundTurn(state, index) {
+    target.queueNextChatJob = async function queueOnNextBackgroundTurn(state, index) {
       if (terminalDepth <= 0) return originalQueueNextChatJob(state, index);
 
       const chat = state?.chats?.[index];
       const key = chatKey(state, index);
-      if (!chat || !key) return root.publicState(state);
+      if (!chat || !key) return target.publicState(state);
 
       if (!scheduled.has(key)) {
         const token = state.token;
         const chainId = chat.chainId;
         const chatId = chat.id;
-        const schedule = typeof root.setTimeout === "function" ? root.setTimeout.bind(root) : setTimeout;
+        const schedule = typeof target.setTimeout === "function" ? target.setTimeout.bind(target) : setTimeout;
         const timer = schedule(() => {
-          const operation = root.enqueue(async () => {
-            const latest = await root.loadState();
-            if (!latest?.running || latest.token !== token) return root.publicState(latest);
+          const operation = target.enqueue(async () => {
+            const latest = await target.loadState();
+            if (!latest?.running || latest.token !== token) return target.publicState(latest);
             const latestIndex = findCurrentIndex(latest, chainId, chatId);
-            if (latestIndex < 0) return root.publicState(latest);
+            if (latestIndex < 0) return target.publicState(latest);
             const latestChat = latest.chats[latestIndex];
-            if (latestChat.currentJobId || !root.isChatEligible(latest, latestChat)) {
-              return root.publicState(latest);
+            if (latestChat.currentJobId || !target.isChatEligible(latest, latestChat)) {
+              return target.publicState(latest);
             }
             return originalQueueNextChatJob(latest, latestIndex);
           });
@@ -69,12 +70,12 @@
         scheduled.set(key, timer);
       }
 
-      return root.publicState(state);
+      return target.publicState(state);
     };
 
     for (const name of TERMINAL_METHODS) {
       const original = originalTerminalMethods[name];
-      root[name] = async function acknowledgeBeforeRedispatch(...args) {
+      target[name] = async function acknowledgeBeforeRedispatch(...args) {
         terminalDepth += 1;
         try {
           return await original(...args);
@@ -84,14 +85,16 @@
       };
     }
 
-    installed = {
+    const installed = {
       originalQueueNextChatJob,
-      originalTerminalMethods
+      originalTerminalMethods,
+      scheduled
     };
+    installations.set(target, installed);
     return installed;
   }
 
-  if (typeof importScripts === "function") install();
+  if (typeof importScripts === "function") install(root);
 
   return {
     TERMINAL_METHODS,
