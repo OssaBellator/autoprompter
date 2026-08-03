@@ -8,6 +8,14 @@
     return chrome.runtime.sendMessage({ scope: SCOPE, type, ...payload });
   }
 
+  function requireResponse(response, command) {
+    if (!response || typeof response !== "object") {
+      throw new Error(`AutoPrompter did not receive a valid ${command} response. Reload the extension, close this popup, and open it again.`);
+    }
+    if (response.ok === false) throw new Error(response.error || `AutoPrompter ${command} failed.`);
+    return response;
+  }
+
   function element(id) {
     return document.getElementById(id);
   }
@@ -107,12 +115,15 @@
   }
 
   async function load() {
-    const [settingsResponse, statusResponse] = await Promise.all([
+    const [settingsResult, statusResult] = await Promise.all([
       send("GET_SELF_REPAIR_SETTINGS"),
       send("GET_SELF_REPAIR_STATUS")
     ]);
-    if (settingsResponse?.ok === false) throw new Error(settingsResponse.error || "Could not load self-repair settings.");
-    const settings = settingsResponse?.settings || {};
+    const settingsResponse = requireResponse(settingsResult, "self-repair settings");
+    const statusResponse = requireResponse(statusResult, "self-repair status");
+    const settings = settingsResponse.settings && typeof settingsResponse.settings === "object"
+      ? settingsResponse.settings
+      : {};
     element("selfRepairEnabled").checked = settings.enabled === true;
     element("selfRepairAutoMerge").checked = settings.autoMerge !== false;
     element("selfRepairCooldown").value = Number(settings.cooldownMinutes || 60);
@@ -121,29 +132,27 @@
   }
 
   async function save() {
-    const response = await send("SAVE_SELF_REPAIR_SETTINGS", {
+    const response = requireResponse(await send("SAVE_SELF_REPAIR_SETTINGS", {
       settings: {
         enabled: element("selfRepairEnabled").checked,
         autoMerge: element("selfRepairAutoMerge").checked,
         cooldownMinutes: Number(element("selfRepairCooldown").value),
         maxRepairsPerDay: Number(element("selfRepairDailyLimit").value)
       }
-    });
-    if (response?.ok === false) throw new Error(response.error || "Could not save self-repair settings.");
-    element("selfRepairMessage").textContent = response.settings.enabled
+    }), "self-repair settings save");
+    const settings = response.settings && typeof response.settings === "object" ? response.settings : {};
+    element("selfRepairMessage").textContent = settings.enabled
       ? "Automatic self-repair is enabled. Only sanitized technical diagnostics are sent to temporary repair chats."
       : "Automatic self-repair is disabled.";
   }
 
   async function refresh() {
-    const response = await send("GET_SELF_REPAIR_STATUS");
-    if (response?.ok === false) throw new Error(response.error || "Could not refresh self-repair status.");
+    const response = requireResponse(await send("GET_SELF_REPAIR_STATUS"), "self-repair status refresh");
     renderStatus(response);
   }
 
   async function clearHistory() {
-    const response = await send("CLEAR_SELF_REPAIR_HISTORY");
-    if (response?.ok === false) throw new Error(response.error || "Could not clear self-repair history.");
+    const response = requireResponse(await send("CLEAR_SELF_REPAIR_HISTORY"), "self-repair history clear");
     renderStatus(response);
     element("selfRepairMessage").textContent = response.activeJobId
       ? "Completed history cleared; the active repair was retained."
@@ -172,7 +181,7 @@
     return true;
   }
 
-  const start = () => install().catch(() => {});
+  const start = () => install().catch(showError);
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
   else setTimeout(start, 0);
 })();

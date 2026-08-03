@@ -1,7 +1,14 @@
 "use strict";
 
+importScripts("autocontinue-runtime-boundary.js");
+if (!globalThis.AutoPrompterRuntimeBoundary?.install()) {
+  throw new Error("AutoPrompter could not install the runtime message boundary.");
+}
+
+importScripts("background.js");
+globalThis.AutoPrompterRuntimeBoundary.finalize();
+
 importScripts(
-  "background.js",
   "autocontinue-state-guard.js",
   "autocontinue-unlimited-retries.js",
   "autocontinue-extended-thinking.js",

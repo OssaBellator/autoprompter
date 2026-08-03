@@ -14,14 +14,17 @@ function read(name) {
 
 test("manifest loads AutoContinue and the isolated repair content worker", () => {
   const manifest = JSON.parse(read("manifest.json"));
-  assert.equal(manifest.version, "5.1.1");
+  assert.equal(manifest.version, "5.1.2");
   assert.deepEqual(manifest.content_scripts[0].js, ["content.js", "self-repair-content.js"]);
   assert.deepEqual(manifest.permissions, ["storage", "tabs", "notifications"]);
   assert.deepEqual(manifest.host_permissions, ["https://chatgpt.com/*", "https://chat.openai.com/*"]);
 });
 
-test("service worker repairs scheduler state before installing recovery adapters", () => {
+test("service worker routes all scheduler commands through final runtime functions", () => {
   const entry = read("background-entry.js");
+  assert.match(entry, /autocontinue-runtime-boundary\.js/);
+  assert.match(entry, /AutoPrompterRuntimeBoundary\?\.install\(\)/);
+  assert.match(entry, /AutoPrompterRuntimeBoundary\.finalize\(\)/);
   assert.match(entry, /autocontinue-state-guard\.js/);
   assert.match(entry, /autocontinue-unlimited-retries\.js/);
   assert.match(entry, /autocontinue-extended-thinking\.js/);
@@ -31,6 +34,10 @@ test("service worker repairs scheduler state before installing recovery adapters
   assert.match(entry, /AutoPrompterStateGuard\.install\(\)/);
   assert.match(entry, /AutoPrompterTransientThinkingRecovery\.install\(\)/);
   assert.match(entry, /AutoPrompterDeferredDispatch\.install\(\)/);
+  assert.ok(entry.indexOf('importScripts("autocontinue-runtime-boundary.js")')
+    < entry.indexOf('importScripts("background.js")'));
+  assert.ok(entry.indexOf("AutoPrompterRuntimeBoundary.finalize()")
+    < entry.indexOf('"autocontinue-state-guard.js"'));
   assert.ok(entry.indexOf("AutoPrompterStateGuard.install()")
     < entry.indexOf("AutoPrompterUnlimitedConnectionRetries.install()"));
   assert.ok(entry.indexOf("AutoPrompterTransientThinkingRecovery.install()")
@@ -70,6 +77,16 @@ test("folder and self-repair popup adapters are loaded without legacy command co
   assert.doesNotMatch(source, /project-mode-retirement|project-github-ui\.js|project-ui\.js/);
 });
 
+test("popup normalizes scheduler snapshots before the main renderer loads", () => {
+  const html = read("popup.html");
+  const safety = read("popup-state-safety.js");
+  assert.match(html, /popup-state-safety\.js/);
+  assert.ok(html.indexOf('src="popup-state-safety.js"') < html.indexOf('src="popup.js"'));
+  assert.match(safety, /normalizeSchedulerResponse/);
+  assert.match(safety, /normalizeChat/);
+  assert.match(safety, /filter\(Boolean\)/);
+});
+
 test("popup folder adapter provides notes and scheduler enrichment", () => {
   const source = read("project-folders-ui.js");
   assert.match(source, /chatNotes/);
@@ -78,10 +95,13 @@ test("popup folder adapter provides notes and scheduler enrichment", () => {
   assert.match(source, /Projects are folders only/);
 });
 
-test("self-repair UI is opt-in and exposes bounded status controls", () => {
+test("self-repair UI validates responses before reading settings or active job state", () => {
   const source = read("self-repair-ui.js");
   assert.match(source, /Automatically diagnose extension failures/);
   assert.match(source, /Maximum repairs per day/);
   assert.match(source, /connected write-capable GitHub tool/);
-  assert.match(source, /GET_SELF_REPAIR_STATUS/);
+  assert.match(source, /function requireResponse/);
+  assert.match(source, /requireResponse\(await send\("SAVE_SELF_REPAIR_SETTINGS"/);
+  assert.match(source, /requireResponse\(await send\("CLEAR_SELF_REPAIR_HISTORY"/);
+  assert.match(source, /response\.activeJobId/);
 });
