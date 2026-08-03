@@ -1,6 +1,6 @@
 # AutoPrompter for ChatGPT
 
-Current release: **5.0.0**
+Current release: **5.0.1**
 
 AutoPrompter is a Microsoft Edge / Chromium Manifest V3 extension for running reliable AutoContinue workflows through ChatGPT Web. It does not call an inference API.
 
@@ -14,7 +14,9 @@ Select up to 12 ChatGPT conversations and run them concurrently in inactive mana
 - plugin/tool instructions;
 - notes and context that are appended to every work prompt.
 
-A normal `Connection interrupted. Waiting for the complete answer` notice continues retrying in the same chat without a fixed retry ceiling.
+A completed response is now acknowledged to the ChatGPT tab before AutoPrompter dispatches the next prompt. This removes the re-entrant completion race that could make a run stop or fail after its first continuation.
+
+A normal `Connection interrupted. Waiting for the complete answer` notice continues retrying in the same chat without a fixed retry ceiling. Retry dispatch also waits until the interruption acknowledgement has completed.
 
 When ChatGPT repeatedly displays the full “Our systems are thinking a bit more about this request…” platform notice, AutoPrompter retries the same conversation three times. The fourth consecutive occurrence starts a fresh successor chat and carries the configured prompt, repository details, project context, and per-chat notes forward.
 
@@ -75,7 +77,7 @@ npm test
 npm run check
 ```
 
-The active test suite covers project-folder migration and CRUD, per-chat and project context injection, retired project-command blocking, runtime wiring, and repeated extended-thinking recovery.
+The active test suite covers project-folder migration and CRUD, per-chat and project context injection, retired project-command blocking, runtime wiring, repeated extended-thinking recovery, and next-turn continuation dispatch.
 
 ## Known limitations
 
