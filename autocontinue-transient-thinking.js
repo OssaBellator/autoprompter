@@ -7,7 +7,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : self, root => {
   const MAX_SAME_CHAT_RELOADS = 3;
   const TRANSIENT_STATUS = /^(?:thinking|generating|working)(?:\s*[.…]{1,3})?$/i;
-  let installed = false;
+  const installedRuntimes = new WeakSet();
 
   function normalize(value) {
     return String(value || "")
@@ -29,39 +29,40 @@
     };
   }
 
-  async function resetCount(message, sender) {
-    if (typeof root.loadState !== "function" || typeof root.findChatIndexForMessage !== "function") return;
-    const state = await root.loadState();
-    const index = root.findChatIndexForMessage(state, message, sender);
+  async function resetCount(runtime, message, sender) {
+    if (typeof runtime.loadState !== "function" || typeof runtime.findChatIndexForMessage !== "function") return;
+    const state = await runtime.loadState();
+    const index = runtime.findChatIndexForMessage(state, message, sender);
     if (index < 0) return;
     const chat = state.chats[index];
     if (!chat?.transientThinkingRepeatCount) return;
     chat.transientThinkingRepeatCount = 0;
-    await root.saveState(state);
+    await runtime.saveState(state);
   }
 
-  function install() {
-    if (installed) return true;
+  function install(runtime = root) {
+    if (!runtime || (typeof runtime !== "object" && typeof runtime !== "function")) return false;
+    if (installedRuntimes.has(runtime)) return true;
     if (
-      typeof root.interruptJob !== "function"
-      || typeof root.finishJob !== "function"
-      || typeof root.loadState !== "function"
-      || typeof root.saveState !== "function"
-      || typeof root.findChatIndexForMessage !== "function"
-      || typeof root.queueNextChatJob !== "function"
-      || typeof root.beginSuccessor !== "function"
+      typeof runtime.interruptJob !== "function"
+      || typeof runtime.finishJob !== "function"
+      || typeof runtime.loadState !== "function"
+      || typeof runtime.saveState !== "function"
+      || typeof runtime.findChatIndexForMessage !== "function"
+      || typeof runtime.queueNextChatJob !== "function"
+      || typeof runtime.beginSuccessor !== "function"
     ) return false;
 
-    const originalInterruptJob = root.interruptJob;
-    const originalFinishJob = root.finishJob;
+    const originalInterruptJob = runtime.interruptJob;
+    const originalFinishJob = runtime.finishJob;
 
-    root.interruptJob = async function interruptWithTransientThinkingRecovery(message, sender) {
+    runtime.interruptJob = async function interruptWithTransientThinkingRecovery(message, sender) {
       const transient = String(message?.kind || "") === "stalled"
         && isTransientThinkingStatus(message?.message);
       if (!transient) return originalInterruptJob(message, sender);
 
-      const state = await root.loadState();
-      const index = root.findChatIndexForMessage(state, message, sender);
+      const state = await runtime.loadState();
+      const index = runtime.findChatIndexForMessage(state, message, sender);
       if (index < 0) return originalInterruptJob(message, sender);
       const chat = state.chats[index];
       const decision = nextAction(chat.transientThinkingRepeatCount);
@@ -73,9 +74,9 @@
         if (chat.settings) {
           chat.settings.maxRollovers = Math.max(Number(chat.settings.maxRollovers || 0), currentRollovers + 1);
         }
-        await root.saveState(state);
+        await runtime.saveState(state);
         const reason = `ChatGPT repeated the stale ${normalize(message.message)} status more than ${MAX_SAME_CHAT_RELOADS} times. Starting a fresh chat.`;
-        return root.beginSuccessor(state, index, {
+        return runtime.beginSuccessor(state, index, {
           ...message,
           kind: "stalled",
           message: reason,
@@ -92,30 +93,30 @@
       chat.initialJobPending = false;
       chat.lastError = normalize(message.message);
       chat.status = `Refreshing stale thinking state (${decision.count}/${MAX_SAME_CHAT_RELOADS})`;
-      root.updateOverallStatus(state, `${chat.title}: ${chat.status}`);
-      await root.saveState(state);
+      runtime.updateOverallStatus(state, `${chat.title}: ${chat.status}`);
+      await runtime.saveState(state);
 
       const tabId = chat.workerTabId;
       try {
         if (Number.isInteger(tabId)) {
-          await root.chrome.tabs.update(tabId, { url: "about:blank", active: false });
+          await runtime.chrome.tabs.update(tabId, { url: "about:blank", active: false });
         }
       } catch (error) {
-        return root.failChatWorker(
+        return runtime.failChatWorker(
           state,
           index,
           `Could not refresh the managed chat after a stale Thinking status: ${error?.message || error}`
         );
       }
-      return root.queueNextChatJob(state, index);
+      return runtime.queueNextChatJob(state, index);
     };
 
-    root.finishJob = async function finishAndResetTransientThinking(message, sender) {
-      await resetCount(message, sender);
+    runtime.finishJob = async function finishAndResetTransientThinking(message, sender) {
+      await resetCount(runtime, message, sender);
       return originalFinishJob(message, sender);
     };
 
-    installed = true;
+    installedRuntimes.add(runtime);
     return true;
   }
 
