@@ -139,7 +139,7 @@
   function missingChatState(runtime, state, operation) {
     const repaired = repairSchedulerState(state, runtime).state;
     if (!repaired) return runtime.publicState(null);
-    repaired.lastError = `AutoPrompter ignored a stale ${operation} request because its chat no longer exists.`;
+    repaired.lastError = `AutoPrompter ignored a stale ${operation} request because its chat no longer exists or no longer owns that job.`;
     repaired.pausedReason = repaired.lastError;
     repaired.status = "Recovered stale scheduler request";
     return Promise.resolve(runtime.saveState(repaired)).then(() => runtime.publicState(repaired));
@@ -186,7 +186,11 @@
 
     runtime.beginSuccessor = async function beginGuardedSuccessor(state, index, message, ...rest) {
       const repaired = repairSchedulerState(state, runtime).state;
-      if (!repaired?.chats?.[index]) return missingChatState(runtime, repaired, "successor");
+      const chat = repaired?.chats?.[index];
+      const expectedJobId = text(message?.jobId);
+      if (!chat || (expectedJobId && chat.currentJobId !== expectedJobId)) {
+        return missingChatState(runtime, repaired, "successor");
+      }
       return originalBeginSuccessor(repaired, index, message || {}, ...rest);
     };
 
