@@ -52,22 +52,19 @@
         const token = state.token;
         const chainId = chat.chainId;
         const chatId = chat.id;
-        const schedule = typeof target.setTimeout === "function" ? target.setTimeout.bind(target) : setTimeout;
-        const timer = schedule(() => {
-          const operation = target.enqueue(async () => {
-            const latest = await target.loadState();
-            if (!latest?.running || latest.token !== token) return target.publicState(latest);
-            const latestIndex = findCurrentIndex(latest, chainId, chatId);
-            if (latestIndex < 0) return target.publicState(latest);
-            const latestChat = latest.chats[latestIndex];
-            if (latestChat.currentJobId || !target.isChatEligible(latest, latestChat)) {
-              return target.publicState(latest);
-            }
-            return originalQueueNextChatJob(latest, latestIndex);
-          });
-          Promise.resolve(operation).catch(() => {}).finally(() => scheduled.delete(key));
-        }, 0);
-        scheduled.set(key, timer);
+        const operation = target.enqueue(async () => {
+          const latest = await target.loadState();
+          if (!latest?.running || latest.token !== token) return target.publicState(latest);
+          const latestIndex = findCurrentIndex(latest, chainId, chatId);
+          if (latestIndex < 0) return target.publicState(latest);
+          const latestChat = latest.chats[latestIndex];
+          if (latestChat.currentJobId || !target.isChatEligible(latest, latestChat)) {
+            return target.publicState(latest);
+          }
+          return originalQueueNextChatJob(latest, latestIndex);
+        });
+        scheduled.set(key, operation);
+        Promise.resolve(operation).catch(() => {}).finally(() => scheduled.delete(key));
       }
 
       return target.publicState(state);
