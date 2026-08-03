@@ -80,7 +80,7 @@ test("an invalid stored run stops cleanly instead of dereferencing a missing cha
   assert.match(result.state.lastError, /did not contain a valid chat/i);
 });
 
-test("installed guard rejects stale continuation and successor indices", async () => {
+test("installed guard rejects stale continuation and successor ownership", async () => {
   let stored = {
     running: true,
     token: 9,
@@ -106,8 +106,12 @@ test("installed guard rejects stale continuation and successor indices", async (
   assert.match(staleQueue.error, /stale continuation/i);
   assert.equal(calls.some(call => call[0] === "queue"), false);
 
-  const staleSuccessor = await runtime.beginSuccessor(loaded, 5, { jobId: "job-1" });
-  assert.match(staleSuccessor.error, /stale successor/i);
+  const missingSuccessor = await runtime.beginSuccessor(loaded, 5, { jobId: "job-1" });
+  assert.match(missingSuccessor.error, /stale successor/i);
+  assert.equal(calls.some(call => call[0] === "successor"), false);
+
+  const wrongOwner = await runtime.beginSuccessor(loaded, 0, { jobId: "old-job" });
+  assert.match(wrongOwner.error, /stale successor/i);
   assert.equal(calls.some(call => call[0] === "successor"), false);
 
   const validSuccessor = await runtime.beginSuccessor(loaded, 0, { jobId: "job-1" });
