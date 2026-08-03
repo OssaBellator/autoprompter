@@ -14,15 +14,17 @@ function read(name) {
 
 test("manifest loads only the AutoContinue content runtime", () => {
   const manifest = JSON.parse(read("manifest.json"));
-  assert.equal(manifest.version, "5.0.0");
+  assert.equal(manifest.version, "5.0.1");
   assert.deepEqual(manifest.content_scripts[0].js, ["content.js"]);
   assert.deepEqual(manifest.permissions, ["storage", "tabs", "notifications"]);
 });
 
-test("service worker no longer loads planner, worker, reviewer, or integrator controllers", () => {
+test("service worker loads continuation recovery without project controllers", () => {
   const entry = read("background-entry.js");
   assert.match(entry, /autocontinue-unlimited-retries\.js/);
   assert.match(entry, /autocontinue-extended-thinking\.js/);
+  assert.match(entry, /autocontinue-deferred-dispatch\.js/);
+  assert.match(entry, /AutoPrompterDeferredDispatch\.install\(\)/);
   assert.match(entry, /project-mode-retirement\.js/);
   assert.doesNotMatch(entry, /project-github|project-orchestrator|project-task-board|planner-compiler|project-role-kick/);
 });
