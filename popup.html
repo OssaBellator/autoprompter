@@ -11,7 +11,7 @@
     <header>
       <div>
         <h1>AutoPrompter</h1>
-        <p>Run selected chats concurrently in managed tabs</p>
+        <p>Run selected ChatGPT conversations in managed tabs</p>
       </div>
     </header>
 
@@ -42,7 +42,7 @@
         <input id="disableCircuitBreaker" type="checkbox">
         <span>Disable automatic circuit breaker</span>
       </label>
-      <p class="hint">When disabled, AutoPrompter ignores its own restriction-message detector. ChatGPT's platform controls still apply, and the extension does not dismiss or bypass them.</p>
+      <p class="hint">Disabling the detector does not bypass ChatGPT platform controls.</p>
     </section>
 
     <details id="continuityPanel" class="continuity">
@@ -52,22 +52,18 @@
           <input id="continuityEnabled" type="checkbox">
           <span>Enable verified repository handoffs</span>
         </label>
-
         <label>
           GitHub repository
           <input id="repository" type="text" placeholder="owner/repository" autocomplete="off">
         </label>
-
         <label>
           Continuity file
           <input id="handoffFile" type="text" placeholder="AUTOPROMPTER_HANDOFF.md" autocomplete="off">
         </label>
-
         <label>
           Plugin/tool instruction
           <textarea id="pluginInstruction" rows="3" spellcheck="true"></textarea>
         </label>
-
         <div class="grid">
           <label>
             Estimated context tokens
@@ -78,7 +74,6 @@
             <input id="contextThresholdPercent" type="number" min="50" max="98" step="1">
           </label>
         </div>
-
         <div class="grid">
           <label>
             Stall timeout (minutes)
@@ -89,7 +84,6 @@
             <input id="maxRollovers" type="number" min="1" max="10" step="1">
           </label>
         </div>
-
         <label class="check-row">
           <input id="checkpointBeforePrompt" type="checkbox">
           <span>Checkpoint before new work</span>
@@ -98,237 +92,24 @@
           <input id="checkpointAfterPrompt" type="checkbox">
           <span>Checkpoint after completed work</span>
         </label>
-
-        <p class="warning">Context usage is estimated from visible text. Verified repository handoffs are preferred; if an actual context-limit message arrives before a checkpoint can be made, AutoPrompter opens a best-effort fresh chat using the configured prompt and repository details. Rate limits, account restrictions, and safety blocks still stop the scheduler when the circuit breaker is enabled.</p>
+        <p class="warning">Context usage is estimated from visible text. Repository actions still depend on the connected tool and its confirmations.</p>
       </div>
     </details>
 
-    <details id="projectModePanel" class="continuity project-mode">
-      <summary>Project Mode</summary>
-      <div class="details-body">
-        <div class="project-tabs" role="tablist" aria-label="Project Mode views">
-          <button id="projectExistingTab" class="project-tab active" type="button" role="tab" aria-selected="true" aria-controls="projectExistingPanel">Existing projects</button>
-          <button id="projectNewTab" class="project-tab" type="button" role="tab" aria-selected="false" aria-controls="projectNewPanel" tabindex="-1">New project</button>
-        </div>
-
-        <section id="projectExistingPanel" class="project-tab-panel" role="tabpanel" aria-labelledby="projectExistingTab">
-          <p class="hint">Select a saved project to inspect progress, retry bootstrap, manage assignments, review results, and approve integration.</p>
-
-        <div class="project-toolbar">
-          <label>
-            Saved project
-            <select id="projectSelect">
-              <option value="">No projects yet</option>
-            </select>
-          </label>
-          <button id="inspectProject" class="compact" type="button">Inspect</button>
-        </div>
-
-        <div id="projectStatusCard" class="project-status-card" hidden>
-          <strong id="projectStatusTitle"></strong>
-          <span id="projectStatusBadge" class="project-status-badge"></span>
-          <small id="projectStatusMeta"></small>
-          <pre id="projectInspectOutput"></pre>
-          <div class="inline-actions">
-            <button id="pauseProject" class="compact" type="button">Pause</button>
-            <button id="resumeProject" class="compact" type="button">Resume</button>
-            <button id="cancelProject" class="compact" type="button">Cancel</button>
-          </div>
-
-          <section id="plannerWorkbench" class="planner-workbench">
-            <strong>Planner and role bootstrap</strong>
-            <p class="hint">Project creation normally creates or initializes the fixed-role chats, runs the planner, repairs malformed JSON, validates the plan, approves it, and prepares worker assignments automatically. Manual controls remain available as a fallback.</p>
-            <div class="inline-actions">
-              <button id="bootstrapProject" class="compact" type="button">Run automatic bootstrap</button>
-              <button id="buildPlannerPrompt" class="compact" type="button">Generate planner prompt manually</button>
-            </div>
-            <label>
-              Planner prompt
-              <textarea id="plannerPromptOutput" rows="8" readonly placeholder="Generate a prompt for the assigned planner chat"></textarea>
-            </label>
-            <label>
-              Planner response
-              <textarea id="plannerResponseInput" rows="8" maxlength="120000" placeholder="AUTOPROMPTER_PLAN_BEGIN&#10;{ ... }&#10;AUTOPROMPTER_PLAN_END"></textarea>
-            </label>
-            <div class="inline-actions">
-              <button id="validatePlannerOutput" class="compact" type="button">Validate pending plan</button>
-              <button id="approveProjectPlan" class="compact" type="button">Approve and create tasks</button>
-              <button id="discardProjectPlan" class="compact" type="button">Discard pending plan</button>
-            </div>
-            <pre id="plannerPlanSummary"></pre>
-          </section>
-
-          <section id="workerWorkbench" class="worker-workbench">
-            <strong>Worker lease preparation</strong>
-            <p class="hint">Prepare leases locally, inspect prompts, or explicitly dispatch them to assigned ChatGPT Web chats after verifying each worker model. Model selection is never automated.</p>
-            <div class="inline-actions">
-              <button id="startProjectMode" class="compact" type="button">Start project locally</button>
-              <button id="prepareProjectAssignments" class="compact" type="button">Prepare assignments</button>
-              <button id="recoverProjectLeases" class="compact" type="button">Recover expired leases</button>
-            </div>
-            <label class="project-dispatch-confirmation">
-              <input id="projectModelVerified" type="checkbox">
-              I verified the configured model in every assigned worker chat
-            </label>
-            <button id="dispatchProjectAssignments" class="primary" type="button">Send prepared assignments to ChatGPT Web</button>
-            <div id="projectWorkerState" class="project-worker-state"></div>
-            <label>
-              Prepared assignment
-              <select id="projectDispatchSelect">
-                <option value="">No prepared assignments</option>
-              </select>
-            </label>
-            <textarea id="projectDispatchPrompt" rows="8" readonly placeholder="Choose an assignment to inspect its prompt"></textarea>
-
-            <section class="result-review-workbench">
-              <strong>Result and independent review</strong>
-              <p class="hint">Live worker replies are captured automatically. For manual work, paste the exact result envelope for the selected dispatch. A separate reviewer envelope is required before the task can be accepted.</p>
-              <label>
-                Worker result envelope
-                <textarea id="projectResultInput" rows="8" maxlength="120000" placeholder="AUTOPROMPTER_TASK_RESULT_BEGIN&#10;{ ... }&#10;AUTOPROMPTER_TASK_RESULT_END"></textarea>
-              </label>
-              <button id="submitProjectResult" class="compact" type="button">Validate worker result</button>
-              <button id="buildProjectReviewerPrompt" class="compact" type="button">Generate reviewer prompt</button>
-              <label>
-                Reviewer prompt
-                <textarea id="projectReviewerPrompt" rows="8" readonly></textarea>
-              </label>
-              <label>
-                Reviewer response envelope
-                <textarea id="projectReviewInput" rows="8" maxlength="120000" placeholder="AUTOPROMPTER_REVIEW_BEGIN&#10;{ ... }&#10;AUTOPROMPTER_REVIEW_END"></textarea>
-              </label>
-              <button id="submitProjectReview" class="compact" type="button">Validate reviewer decision</button>
-            </section>
-
-            <section class="integration-workbench">
-              <strong>Integration evidence</strong>
-              <p class="hint">After every task is independently accepted, generate an integrator prompt. Integration remains on a non-default branch and project completion requires explicit approval.</p>
-              <button id="buildProjectIntegratorPrompt" class="compact" type="button">Generate integrator prompt</button>
-              <label>
-                Integrator prompt
-                <textarea id="projectIntegratorPrompt" rows="8" readonly></textarea>
-              </label>
-              <label>
-                Integration response envelope
-                <textarea id="projectIntegrationInput" rows="8" maxlength="120000" placeholder="AUTOPROMPTER_INTEGRATION_BEGIN&#10;{ ... }&#10;AUTOPROMPTER_INTEGRATION_END"></textarea>
-              </label>
-              <div class="inline-actions">
-                <button id="submitProjectIntegration" class="compact" type="button">Validate integration</button>
-                <button id="requestProjectIntegrationRetry" class="compact" type="button">Request retry</button>
-                <button id="approveProjectIntegration" class="compact" type="button">Approve completion</button>
-                <button id="discardProjectIntegration" class="compact" type="button">Discard integration</button>
-              </div>
-              <label>
-                Integration retry requirements
-                <textarea id="projectIntegrationRetryChanges" rows="3" placeholder="One required change per line; blocked conflicts are included automatically"></textarea>
-              </label>
-            </section>
-
-            <section class="approval-workbench">
-              <strong>External-action approval queue</strong>
-              <p class="hint">Approval records user intent only. AutoPrompter does not execute merges, releases, workflow changes, permission changes, deletions, or external side effects.</p>
-              <div class="grid">
-                <label>
-                  Action
-                  <select id="projectApprovalAction">
-                    <option value="merge_to_default_branch">Merge to default branch</option>
-                    <option value="delete_branch">Delete branch</option>
-                    <option value="publish_release">Publish release</option>
-                    <option value="modify_workflow">Modify workflow</option>
-                    <option value="change_permissions">Change permissions</option>
-                    <option value="external_side_effect">Other external side effect</option>
-                  </select>
-                </label>
-                <label>
-                  Target
-                  <input id="projectApprovalTarget" type="text" maxlength="500" placeholder="branch, release, workflow, permission, or external target">
-                </label>
-              </div>
-              <label>
-                Justification
-                <textarea id="projectApprovalJustification" rows="3" maxlength="4000" placeholder="Why this exact action and target are needed"></textarea>
-              </label>
-              <button id="requestProjectApproval" class="compact" type="button">Add pending approval</button>
-              <label>
-                Approval request
-                <select id="projectApprovalSelect"><option value="">No approval requests</option></select>
-              </label>
-              <label>
-                Decision note
-                <textarea id="projectApprovalDecisionNote" rows="2" maxlength="4000"></textarea>
-              </label>
-              <div class="inline-actions">
-                <button id="approveProjectAction" class="compact" type="button">Approve request</button>
-                <button id="rejectProjectAction" class="compact" type="button">Reject request</button>
-              </div>
-              <textarea id="projectApprovalInstruction" rows="6" readonly placeholder="An approved request produces a scoped instruction but performs no action"></textarea>
-            </section>
-
-            <section class="reconciliation-workbench">
-              <strong>Repository restart reconciliation</strong>
-              <p class="hint">Generate a read-only repository evidence prompt after a browser or extension restart. Reconciliation never accepts tasks or integrations by itself.</p>
-              <button id="buildProjectReconciliationPrompt" class="compact" type="button">Generate reconciliation prompt</button>
-              <textarea id="projectReconciliationPrompt" rows="7" readonly></textarea>
-              <textarea id="projectReconciliationInput" rows="7" maxlength="120000" placeholder="AUTOPROMPTER_RECONCILIATION_BEGIN&#10;{ ... }&#10;AUTOPROMPTER_RECONCILIATION_END"></textarea>
-              <button id="submitProjectReconciliation" class="compact" type="button">Validate repository snapshot</button>
-              <pre id="projectReconciliationSummary"></pre>
-            </section>
-
-            <section class="selector-health-workbench">
-              <strong>ChatGPT selector health</strong>
-              <p class="hint">Checks currently open ChatGPT tabs for the composer, send/stop controls, new-chat control, notices, and conversation identity. This is not an authenticated end-to-end validation.</p>
-              <button id="checkProjectSelectorHealth" class="compact" type="button">Check open ChatGPT tabs</button>
-              <pre id="projectSelectorHealthOutput"></pre>
-            </section>
-          </section>
-        </div>
-
-        </section>
-
-        <section id="projectNewPanel" class="project-tab-panel" role="tabpanel" aria-labelledby="projectNewTab" hidden>
-          <p class="hint">Create a new durable project. The selected chats become workers, while planner, reviewer, and integrator chats can be created automatically.</p>
-        <label>
-          Project title
-          <input id="projectTitle" type="text" maxlength="160" placeholder="AutoPrompter Project Mode">
-        </label>
-        <label>
-          Project goal
-          <textarea id="projectGoal" rows="4" maxlength="12000" placeholder="Describe the durable project outcome"></textarea>
-        </label>
-        <label>
-          GitHub repository
-          <input id="projectRepository" type="text" placeholder="owner/repository">
-        </label>
-
-        <div class="grid">
-          <label>
-            Planner chat
-            <select id="projectPlannerChat"></select>
-          </label>
-          <label>
-            Reviewer chat
-            <select id="projectReviewerChat"></select>
-          </label>
-        </div>
-        <label>
-          Integrator chat
-          <select id="projectIntegratorChat"></select>
-        </label>
-        <p id="projectWorkerHint" class="hint">Currently selected chats become the worker pool. Leave fixed roles on “Create automatically” to create and initialize fresh planner, reviewer, and integrator chats.</p>
-        <button id="createProject" class="primary project-create" type="button">Create and bootstrap project</button>
-        </section>
-        <p id="projectMessage" class="hint project-message" aria-live="polite"></p>
-      </div>
+    <details id="projectModePanel" class="continuity">
+      <summary>Projects</summary>
+      <div class="details-body"><p class="hint">Loading project folders…</p></div>
     </details>
 
     <section class="picker">
       <div class="picker-heading">
         <div>
-          <strong>Selected chats</strong>
-          <small id="selectionSummary">No chats loaded</small>
+          <strong>Chats</strong>
+          <small id="selectionSummary">0 selected</small>
         </div>
         <button id="refresh" class="compact" type="button">Refresh</button>
       </div>
+
       <div id="selectionControls">
         <input id="filter" class="filter" type="search" placeholder="Filter chats" aria-label="Filter chats">
         <div class="bulk-actions">
@@ -336,45 +117,45 @@
           <button id="selectNone" class="link-button" type="button">Clear selection</button>
         </div>
         <div id="chatList" class="chat-list" role="listbox" aria-label="ChatGPT conversations"></div>
-        <p id="catalogHint" class="hint">Chats follow the order currently shown in the ChatGPT sidebar, with the most recent first. Press the ↗ icon on a selected legacy chat to start its work in a new conversation.</p>
+        <p id="catalogHint" class="hint">Chats follow the current ChatGPT sidebar order. Press ↗ to start a selected goal in a fresh conversation.</p>
 
         <details id="chatConfigPanel" class="continuity">
-        <summary>Per-chat prompt and repository overrides</summary>
-        <div class="details-body">
-          <label>
-            Chat
-            <select id="chatConfigChat"></select>
-          </label>
-          <label>
-            Follow-up prompt override
-            <textarea id="chatPrompt" rows="3" placeholder="Leave blank to use the global prompt"></textarea>
-          </label>
-          <label>
-            Continuity mode
-            <select id="chatContinuityMode">
-              <option value="inherit">Use global setting</option>
-              <option value="enabled">Enabled for this chat</option>
-              <option value="disabled">Disabled for this chat</option>
-            </select>
-          </label>
-          <label>
-            GitHub repository override
-            <input id="chatRepository" type="text" placeholder="Leave blank to use the global repository">
-          </label>
-          <label>
-            Continuity file override
-            <input id="chatHandoffFile" type="text" placeholder="Leave blank to use the global continuity file">
-          </label>
-          <label>
-            Plugin/tool instruction override
-            <textarea id="chatPluginInstruction" rows="2" placeholder="Leave blank to use the global instruction"></textarea>
-          </label>
-          <div class="inline-actions">
-            <button id="saveChatConfig" class="compact" type="button">Save override</button>
-            <button id="clearChatConfig" class="compact" type="button">Clear override</button>
+          <summary>Per-chat prompt and repository overrides</summary>
+          <div class="details-body">
+            <label>
+              Chat
+              <select id="chatConfigChat"></select>
+            </label>
+            <label>
+              Follow-up prompt override
+              <textarea id="chatPrompt" rows="3" placeholder="Leave blank to use the global prompt"></textarea>
+            </label>
+            <label>
+              Continuity mode
+              <select id="chatContinuityMode">
+                <option value="inherit">Use global setting</option>
+                <option value="enabled">Enabled for this chat</option>
+                <option value="disabled">Disabled for this chat</option>
+              </select>
+            </label>
+            <label>
+              GitHub repository override
+              <input id="chatRepository" type="text" placeholder="Leave blank to use the global repository">
+            </label>
+            <label>
+              Continuity file override
+              <input id="chatHandoffFile" type="text" placeholder="Leave blank to use the global continuity file">
+            </label>
+            <label>
+              Plugin/tool instruction override
+              <textarea id="chatPluginInstruction" rows="2" placeholder="Leave blank to use the global instruction"></textarea>
+            </label>
+            <div class="inline-actions">
+              <button id="saveChatConfig" class="compact" type="button">Save override</button>
+              <button id="clearChatConfig" class="compact" type="button">Clear override</button>
+            </div>
+            <p class="hint">Changes autosave. The Projects adapter adds a separate notes and context field here.</p>
           </div>
-          <p class="hint">Changes are autosaved when you type or switch chats. Blank values inherit the global settings. Initialization uses each chat's effective repository and continuity file.</p>
-        </div>
         </details>
       </div>
 
@@ -401,7 +182,7 @@
       </div>
     </section>
 
-    <p class="note">Each selected chat uses its own inactive managed tab and queues its next follow-up as soon as that chat finishes. The ↗ option starts a legacy goal in a new chat immediately; without a verified repository handoff, the new chat only receives the configured prompt, title, and repository details. Up to 12 chats can run concurrently.</p>
+    <p class="note">Each selected chat uses an inactive managed tab. AutoContinue acknowledges one completed response before dispatching the next prompt.</p>
   </main>
   <script src="runtime-compat.js"></script>
   <script src="popup.js"></script>
