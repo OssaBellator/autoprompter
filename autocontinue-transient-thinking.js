@@ -29,6 +29,14 @@
     };
   }
 
+  function findCurrentIndex(state, chainId, chatId) {
+    if (!Array.isArray(state?.chats)) return -1;
+    return state.chats.findIndex(chat =>
+      String(chat?.chainId || "") === String(chainId || "")
+      || String(chat?.id || "") === String(chatId || "")
+    );
+  }
+
   async function resetCount(runtime, message, sender) {
     if (typeof runtime.loadState !== "function" || typeof runtime.findChatIndexForMessage !== "function") return;
     const state = await runtime.loadState();
@@ -51,10 +59,34 @@
       || typeof runtime.findChatIndexForMessage !== "function"
       || typeof runtime.queueNextChatJob !== "function"
       || typeof runtime.beginSuccessor !== "function"
+      || typeof runtime.enqueue !== "function"
+      || typeof runtime.publicState !== "function"
     ) return false;
 
     const originalInterruptJob = runtime.interruptJob;
     const originalFinishJob = runtime.finishJob;
+    const originalQueueNextChatJob = runtime.queueNextChatJob;
+
+    runtime.queueNextChatJob = async function queueAfterTransientRefresh(state, index) {
+      const chat = state?.chats?.[index];
+      if (chat?.forceReloadBeforeNext) {
+        chat.forceReloadBeforeNext = false;
+        chat.contentReady = false;
+        await runtime.saveState(state);
+        if (Number.isInteger(chat.workerTabId)) {
+          try {
+            await runtime.chrome.tabs.reload(chat.workerTabId);
+          } catch (error) {
+            return runtime.failChatWorker(
+              state,
+              index,
+              `Could not refresh the managed chat after a stale Thinking status: ${error?.message || error}`
+            );
+          }
+        }
+      }
+      return originalQueueNextChatJob(state, index);
+    };
 
     runtime.interruptJob = async function interruptWithTransientThinkingRecovery(message, sender) {
       const transient = String(message?.kind || "") === "stalled"
@@ -66,24 +98,42 @@
       if (index < 0) return originalInterruptJob(message, sender);
       const chat = state.chats[index];
       const decision = nextAction(chat.transientThinkingRepeatCount);
+      const statusName = normalize(message.message);
 
       if (decision.action === "new_chat") {
         chat.transientThinkingRepeatCount = 0;
         chat.connectionRetryCount = 0;
+        chat.status = "Scheduling a fresh chat after repeated stale thinking states";
         const currentRollovers = Number(chat.rolloverCount || 0);
         if (chat.settings) {
           chat.settings.maxRollovers = Math.max(Number(chat.settings.maxRollovers || 0), currentRollovers + 1);
         }
+        runtime.updateOverallStatus(state, `${chat.title}: ${chat.status}`);
         await runtime.saveState(state);
-        const reason = `ChatGPT repeated the stale ${normalize(message.message)} status more than ${MAX_SAME_CHAT_RELOADS} times. Starting a fresh chat.`;
-        return runtime.beginSuccessor(state, index, {
-          ...message,
-          kind: "stalled",
-          message: reason,
-          reason,
-          forceFreshStart: true,
-          transientThinkingRecovery: true
+
+        const token = state.token;
+        const chainId = chat.chainId;
+        const chatId = chat.id;
+        const expectedJobId = message.jobId;
+        const reason = `ChatGPT repeated the stale ${statusName} status more than ${MAX_SAME_CHAT_RELOADS} times. Starting a fresh chat.`;
+        const operation = runtime.enqueue(async () => {
+          const latest = await runtime.loadState();
+          if (!latest?.running || latest.token !== token) return runtime.publicState(latest);
+          const latestIndex = findCurrentIndex(latest, chainId, chatId);
+          if (latestIndex < 0) return runtime.publicState(latest);
+          const latestChat = latest.chats[latestIndex];
+          if (latestChat.currentJobId !== expectedJobId) return runtime.publicState(latest);
+          return runtime.beginSuccessor(latest, latestIndex, {
+            ...message,
+            kind: "stalled",
+            message: reason,
+            reason,
+            forceFreshStart: true,
+            transientThinkingRecovery: true
+          });
         });
+        Promise.resolve(operation).catch(() => {});
+        return runtime.publicState(state);
       }
 
       chat.transientThinkingRepeatCount = decision.count;
@@ -91,23 +141,11 @@
       chat.jobDispatched = false;
       chat.contentReady = false;
       chat.initialJobPending = false;
-      chat.lastError = normalize(message.message);
+      chat.forceReloadBeforeNext = true;
+      chat.lastError = statusName;
       chat.status = `Refreshing stale thinking state (${decision.count}/${MAX_SAME_CHAT_RELOADS})`;
       runtime.updateOverallStatus(state, `${chat.title}: ${chat.status}`);
       await runtime.saveState(state);
-
-      const tabId = chat.workerTabId;
-      try {
-        if (Number.isInteger(tabId)) {
-          await runtime.chrome.tabs.update(tabId, { url: "about:blank", active: false });
-        }
-      } catch (error) {
-        return runtime.failChatWorker(
-          state,
-          index,
-          `Could not refresh the managed chat after a stale Thinking status: ${error?.message || error}`
-        );
-      }
       return runtime.queueNextChatJob(state, index);
     };
 
@@ -126,6 +164,7 @@
     MAX_SAME_CHAT_RELOADS,
     isTransientThinkingStatus,
     nextAction,
+    findCurrentIndex,
     install
   };
 });
