@@ -3,6 +3,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const Guard = require("../autocontinue-state-guard.js");
+const Transient = require("../autocontinue-transient-thinking.js");
+const Deferred = require("../autocontinue-deferred-dispatch.js");
 
 function runtimeSettings(value = {}) {
   return {
@@ -22,6 +24,32 @@ function validChat(overrides = {}) {
     workerTabId: 42,
     settings: { maxContinuations: 7 },
     ...overrides
+  };
+}
+
+function controlledQueue() {
+  const pending = [];
+  return {
+    pending,
+    enqueue(operation) {
+      let resolvePromise;
+      let rejectPromise;
+      const promise = new Promise((resolve, reject) => {
+        resolvePromise = resolve;
+        rejectPromise = reject;
+      });
+      pending.push(async () => {
+        try {
+          const result = await operation();
+          resolvePromise(result);
+          return result;
+        } catch (error) {
+          rejectPromise(error);
+          throw error;
+        }
+      });
+      return promise;
+    }
   };
 }
 
@@ -117,4 +145,68 @@ test("installed guard rejects stale continuation and successor ownership", async
   const validSuccessor = await runtime.beginSuccessor(loaded, 0, { jobId: "job-1" });
   assert.deepEqual(validSuccessor, { successor: true });
   assert.equal(calls.some(call => call[0] === "successor" && call[1] === 0), true);
+});
+
+test("sparse state survives thinking recovery and deferred successor dispatch", async () => {
+  const queue = controlledQueue();
+  const calls = [];
+  let stored = {
+    running: true,
+    token: 12,
+    settings: { prompt: "Continue", maxContinuations: 5 },
+    chats: [null, validChat({
+      id: "chat-2",
+      chainId: "chat-2",
+      url: "https://chatgpt.com/c/chat-2",
+      currentJobId: "job-4",
+      transientThinkingRepeatCount: 3,
+      settings: undefined
+    })]
+  };
+  const runtime = {
+    chrome: { tabs: { async reload() {} } },
+    normalizeSettings: runtimeSettings,
+    enqueue: queue.enqueue,
+    async loadState() { return stored; },
+    async saveState(value) { stored = value; },
+    publicState(value) { return { running: Boolean(value?.running), chats: value?.chats || [] }; },
+    isChatEligible(_state, chat) { return Boolean(chat && !chat.failed && !chat.retired); },
+    findChatIndexForMessage(state, message, sender) {
+      return state?.chats?.findIndex(chat =>
+        chat?.workerTabId === sender?.tab?.id && chat?.currentJobId === message?.jobId
+      ) ?? -1;
+    },
+    updateOverallStatus() {},
+    async queueNextChatJob() { calls.push(["queue"]); return {}; },
+    async beginSuccessor(state, index, message) {
+      calls.push(["successor", state.chats[index].settings, message.jobId]);
+      return { successor: true };
+    },
+    async failChatWorker() { calls.push(["fail"]); return {}; },
+    async interruptJob() { calls.push(["original-interrupt"]); return {}; },
+    async finishJob() { return {}; },
+    async successorCreated() { return {}; }
+  };
+
+  assert.equal(Guard.install(runtime), true);
+  assert.equal(Transient.install(runtime), true);
+  assert.ok(Deferred.install(runtime));
+
+  const acknowledged = await runtime.interruptJob({
+    kind: "stalled",
+    message: "Thinking",
+    token: 12,
+    jobId: "job-4"
+  }, { tab: { id: 42 } });
+
+  assert.equal(acknowledged.running, true);
+  assert.equal(calls.some(call => call[0] === "successor"), false);
+  assert.equal(queue.pending.length, 1);
+
+  await queue.pending.shift()();
+  const successor = calls.find(call => call[0] === "successor");
+  assert.ok(successor);
+  assert.equal(successor[1].maxContinuations, 5);
+  assert.equal(successor[2], "job-4");
+  assert.equal(calls.some(call => call[0] === "original-interrupt"), false);
 });
