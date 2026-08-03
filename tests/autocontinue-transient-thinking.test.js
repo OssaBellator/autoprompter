@@ -31,9 +31,11 @@ function controlledQueue() {
   };
 }
 
-test("recognizes only bare transient generation statuses", () => {
+test("recognizes only transient generation-status segments", () => {
   assert.equal(Recovery.isTransientThinkingStatus("Thinking"), true);
   assert.equal(Recovery.isTransientThinkingStatus("Notice: Thinking…"), true);
+  assert.equal(Recovery.isTransientThinkingStatus("Thinking | 0:42"), true);
+  assert.equal(Recovery.transientStatusName("Thinking | 0:42"), "Thinking");
   assert.equal(Recovery.isTransientThinkingStatus("Generating..."), true);
   assert.equal(Recovery.isTransientThinkingStatus("Working"), true);
   assert.equal(Recovery.isTransientThinkingStatus("Thinking through the implementation"), false);
@@ -118,7 +120,7 @@ test("acknowledges before reloading the same chat or starting a fresh chat", asy
 
   const first = await runtime.interruptJob({
     kind: "stalled",
-    message: "Thinking",
+    message: "Thinking | 0:42",
     token: 7,
     jobId: "job-1"
   }, sender);
@@ -158,6 +160,47 @@ test("acknowledges before reloading the same chat or starting a fresh chat", asy
   assert.equal(successor[2].transientThinkingRecovery, true);
   assert.equal(state.chats[0].transientThinkingRepeatCount, 0);
   assert.equal(calls.some(call => call[0] === "reload"), false);
+});
+
+test("a different interruption resets the stale-status counter before delegation", async () => {
+  const state = {
+    running: true,
+    token: 9,
+    chats: [{ workerTabId: 18, currentJobId: "other", transientThinkingRepeatCount: 2 }]
+  };
+  let delegated = false;
+  const runtime = {
+    chrome: { tabs: { async reload() {} } },
+    enqueue(operation) { return Promise.resolve().then(operation); },
+    async loadState() { return state; },
+    async saveState() {},
+    publicState(current) { return current; },
+    findChatIndexForMessage(current, message, sender) {
+      return message.token === current.token
+        && message.jobId === current.chats[0].currentJobId
+        && sender.tab.id === current.chats[0].workerTabId
+        ? 0
+        : -1;
+    },
+    updateOverallStatus() {},
+    async queueNextChatJob() {},
+    async beginSuccessor() {},
+    async failChatWorker() {},
+    async interruptJob() { delegated = true; return { delegated: true }; },
+    async finishJob() {}
+  };
+
+  assert.equal(Recovery.install(runtime), true);
+  const result = await runtime.interruptJob({
+    kind: "context_limit",
+    message: "Maximum conversation length reached",
+    token: 9,
+    jobId: "other"
+  }, { tab: { id: 18 } });
+
+  assert.deepEqual(result, { delegated: true });
+  assert.equal(state.chats[0].transientThinkingRepeatCount, 0);
+  assert.equal(delegated, true);
 });
 
 test("a successful completion resets the stale-status counter", async () => {
