@@ -2,6 +2,7 @@
 
 importScripts(
   "background.js",
+  "autocontinue-state-guard.js",
   "autocontinue-unlimited-retries.js",
   "autocontinue-extended-thinking.js",
   "autocontinue-transient-thinking.js",
@@ -10,7 +11,8 @@ importScripts(
 );
 
 if (
-  !globalThis.AutoPrompterUnlimitedConnectionRetries
+  !globalThis.AutoPrompterStateGuard
+  || !globalThis.AutoPrompterUnlimitedConnectionRetries
   || !globalThis.AutoPrompterExtendedThinkingRecovery
   || !globalThis.AutoPrompterTransientThinkingRecovery
   || !globalThis.AutoPrompterDeferredDispatch
@@ -19,6 +21,7 @@ if (
   throw new Error("AutoPrompter AutoContinue runtime failed to initialize.");
 }
 
+globalThis.AutoPrompterStateGuard.install();
 globalThis.AutoPrompterUnlimitedConnectionRetries.install();
 globalThis.AutoPrompterExtendedThinkingRecovery.install();
 globalThis.AutoPrompterTransientThinkingRecovery.install();
