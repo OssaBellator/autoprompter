@@ -4,7 +4,7 @@
   "private": true,
   "description": "Reliable ChatGPT AutoContinue with per-chat context, chat folders, successor recovery, and bounded automatic self-repair.",
   "scripts": {
-    "test": "node --test tests/project-folders.test.js tests/autocontinue-extended-thinking.test.js tests/autocontinue-transient-thinking.test.js tests/autocontinue-deferred-dispatch.test.js tests/autocontinue-state-guard.test.js tests/autocontinue-runtime-boundary.test.js tests/popup-state-safety.test.js tests/autocontinue-self-repair.test.js tests/runtime-v5.test.js",
+    "test": "node --test tests/project-folders.test.js tests/autocontinue-extended-thinking.test.js tests/autocontinue-transient-thinking.test.js tests/autocontinue-thinking-error.test.js tests/autocontinue-deferred-dispatch.test.js tests/autocontinue-state-guard.test.js tests/autocontinue-runtime-boundary.test.js tests/popup-state-safety.test.js tests/autocontinue-self-repair.test.js tests/runtime-v5.test.js",
     "check": "node --check background.js && node --check autocontinue-runtime-boundary.js && node --check autocontinue-state-guard.js && node --check autocontinue-unlimited-retries.js && node --check autocontinue-extended-thinking.js && node --check autocontinue-transient-thinking.js && node --check autocontinue-deferred-dispatch.js && node --check autocontinue-self-repair.js && node --check background-entry.js && node --check content.js && node --check self-repair-content.js && node --check runtime-compat.js && node --check popup-state-safety.js && node --check popup.js && node --check self-repair-ui.js && node --check project-folders.js && node --check project-folders-ui.js"
   },
   "engines": {
