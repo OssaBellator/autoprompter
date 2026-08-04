@@ -6,7 +6,7 @@
   root.AutoPrompterTransientThinkingRecovery = api;
 })(typeof globalThis !== "undefined" ? globalThis : self, root => {
   const MAX_SAME_CHAT_RELOADS = 3;
-  const TRANSIENT_STATUS = /^(?:thinking|generating|working)(?:\s*[.…]{1,3})?$/i;
+  const TRANSIENT_STATUS = /^(?:thinking|generating|working)(?:\s*[.…]{1,3})?(?:\s+(?:error|failed|stuck))?$/i;
   const installedRuntimes = new WeakSet();
 
   function normalize(value) {
